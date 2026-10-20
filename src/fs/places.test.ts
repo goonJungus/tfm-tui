@@ -362,6 +362,8 @@ describe("parseDiskutil", () => {
   const info = new Map<string, DiskutilDiskInfo>([
     ["disk0", { ejectable: false, removable: false, usb: false }],
     ["disk2", { ejectable: true, removable: true, usb: true }],
+    // a disk image: not USB-bus, but ejectable → power-off-eligible
+    ["disk5", { ejectable: true, removable: false, usb: false }],
   ]);
   const list = {
     AllDisksAndPartitions: [
@@ -386,13 +388,17 @@ describe("parseDiskutil", () => {
           { DeviceIdentifier: "disk2s3", Content: "EFI" },
         ],
       },
+      {
+        DeviceIdentifier: "disk5",
+        Partitions: [{ DeviceIdentifier: "disk5s1", VolumeName: "IMAGE", MountPoint: "/Volumes/IMAGE", Content: "Apple_HFS" }],
+      },
     ],
-    WholeDisks: ["disk0", "disk2", "disk3"],
+    WholeDisks: ["disk0", "disk2", "disk3", "disk5"],
   };
 
   test("internal volumes stay hidden; USB mounted + unmounted surface with the physical disk", () => {
     const out = parseDiskutil(list, info);
-    expect(out.map((m) => m.label)).toEqual(["USBSTICK", "SPARE"]);
+    expect(out.map((m) => m.label)).toEqual(["USBSTICK", "SPARE", "IMAGE"]);
     const mounted = out[0]!;
     expect(mounted.target).toBe("/Volumes/USBSTICK");
     expect(mounted.device).toBe("/dev/disk2s1");
@@ -400,6 +406,10 @@ describe("parseDiskutil", () => {
     expect(mounted.removable).toBe(true);
     expect(mounted.usb).toBe(true);
     expect(out[1]!.target).toBe("");
+    // disk image: ejectable but not USB-bus → still power-off-eligible
+    expect(out[2]!.usb).toBe(true);
+    expect(out[2]!.removable).toBe(true);
+    expect(out[2]!.disk).toBe("/dev/disk5");
   });
 
   test("garbage input degrades to empty", () => {

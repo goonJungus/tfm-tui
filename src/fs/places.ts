@@ -363,7 +363,10 @@ export const parseDiskutil = (list: unknown, infoByDisk: ReadonlyMap<string, Dis
       label: v.VolumeName || (target ? path.basename(target) : id),
       target,
       removable: info.ejectable || info.removable,
-      usb: info.usb,
+      // the model's `usb` flag really means "power-off-eligible disk" (the
+      // lsblk TRAN=usb proxy on Linux): on macOS any ejectable disk counts —
+      // USB sticks, SD cards, disk images — not just USB-bus devices
+      usb: info.usb || info.ejectable,
       device: `/dev/${id}`,
       disk: `/dev/${whole}`,
     });
