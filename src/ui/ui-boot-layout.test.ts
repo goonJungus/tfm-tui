@@ -113,8 +113,8 @@ describe("sidebar title block", () => {
     expect(node("tfm-title-sub").visible).toBe(false);
     expect(node("tfm-title-box").height).toBe(TITLE_LOGO_ROWS);
     const frame = t.captureCharFrame();
-    // the apple's bottom lobes are its signature row
-    expect(frame).toContain("▀██▀  ▀██");
+    // the apple's bitten base is its signature row (neofetch mac_small)
+    expect(frame).toContain("`._.-._.'");
     expect(frame).not.toContain("terminal file manager");
     // leave no stray title in the shared renderer — later describes click
     // by coordinates and a visible logo box would sit in their hit path
@@ -123,8 +123,8 @@ describe("sidebar title block", () => {
 
   test("logo art is the Arch mark off macOS, same row count", async () => {
     await mountTitle("logo", "linux");
-    // the arch's splayed feet are its signature row
-    expect(t.captureCharFrame()).toContain("█▀              ▀█");
+    // the arch's splayed feet are its signature row (neofetch arch_small)
+    expect(t.captureCharFrame()).toContain("/_-''");
     expect(titleLogoArt("darwin")).toHaveLength(titleLogoArt("linux").length);
     node("tfm-title-box")?.destroy?.();
   });
