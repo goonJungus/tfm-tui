@@ -439,7 +439,7 @@ describe("runTransfer: raced destinations", () => {
       },
       ensureSudo: async () => true,
       sudoExec: async (argv) => {
-        if (argv[2] === "mv" && argv[3] === "-nT") W(target, "STRANGER");
+        if (argv[2] === "mv" && argv[argv.length - 1] === target) W(target, "STRANGER");
         const result = Bun.spawnSync(argv.slice(2));
         return {
           status: result.exitCode,
@@ -505,7 +505,7 @@ describe("runTransfer: raced destinations", () => {
       },
       ensureSudo: async () => true,
       sudoExec: async (argv) => {
-        if (argv[2] === "mv" && argv[3] === "-nT") W(target, "STRANGER");
+        if (argv[2] === "mv" && argv[argv.length - 1] === target) W(target, "STRANGER");
         if (argv[2] === "test") return { status: 1, stderr: "sudo: a password is required" };
         const result = Bun.spawnSync(argv.slice(2));
         return {
@@ -611,7 +611,12 @@ describe("performBulkRename", () => {
     ]);
     expect(existsSync(path.join(ROOT, "bulk-A.txt"))).toBe(true);
     expect(existsSync(path.join(ROOT, "bulk-B.txt"))).toBe(true);
-    expect(existsSync(a)).toBe(false);
+    // case-only renames: on a case-insensitive fs (APFS) existsSync(old)
+    // still resolves to the renamed file — the stored names are the truth
+    expect(readdirSync(ROOT).filter((n) => n.toLowerCase().startsWith("bulk-")).sort()).toEqual([
+      "bulk-A.txt",
+      "bulk-B.txt",
+    ]);
     expect(h.calls).toContain("undo:rename 2 items:2:2");
     expect(h.calls).toContain("notify:rename:success:Renamed 2 items");
   });
