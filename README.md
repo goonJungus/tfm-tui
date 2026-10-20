@@ -1,6 +1,6 @@
 > ## macOS port
 >
-> This fork ports [tfm-tui](https://github.com/clarkarch/tfm-tui) **v1.1.0** to macOS. The upstream README follows below, unchanged; the original project is BSD 3-Clause (see `LICENSE`).
+> This fork ports [tfm-tui](https://github.com/clarkarch/tfm-tui) **v1.1.0** to macOS. The upstream README follows below, unchanged; the original project is MIT-licensed (see `LICENSE`).
 >
 > What the port changes:
 >
