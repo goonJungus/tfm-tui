@@ -27,6 +27,7 @@ import {
   extractPlan,
   isArchiveEntryLine,
   listArchiveEntries,
+  listArgs,
   makeLineCounter,
   parseToolLine,
   runArchiveTask,
@@ -133,10 +134,19 @@ describe("extractPlan", () => {
       tool: "tar",
       args: ["-x", "-v", "-z", "-f", "/x/a.tar.gz", "-C", "/stage", "--no-same-owner"],
     });
-    expect(extractPlan("tar.lz4", "/x/a.tar.lz4", "/stage", which("tar", "lz4"))).toEqual({
+    expect(extractPlan("tar.lz4", "/x/a.tar.lz4", "/stage", which("tar", "lz4"), "linux")).toEqual({
       tool: "tar",
       args: ["-x", "-v", "-I", "lz4", "-f", "/x/a.tar.lz4", "-C", "/stage", "--no-same-owner"],
     });
+    // bsdtar dialect: no -I anywhere; create picks the codec from the
+    // suffix via -a, read/list auto-detect
+    expect(extractPlan("tar.lz4", "/x/a.tar.lz4", "/stage", which("tar", "lz4"), "darwin").args).not.toContain("-I");
+    expect(compressPlan("tar.br", "/out/a.tar.br", ["foo"], "/src", which("tar"), "darwin").args.slice(0, 3)).toEqual([
+      "-c",
+      "-a",
+      "-v",
+    ]);
+    expect(listArgs("tar.br", "/x/a.tar.br", which("tar"), "darwin")).toEqual(["-t", "-f", "/x/a.tar.br"]);
     expect(extractPlan("tar", "/x/a.tar", "/stage", which("tar")).args).not.toContain("-z");
   });
 
@@ -215,7 +225,7 @@ describe("compressPlan / compressionExt / compressionHint", () => {
       "-v",
       "-f",
     ]);
-    expect(compressPlan("tar.lz4", "/out/a.tar.lz4", ["foo"], "/src").args.slice(0, 3)).toEqual(["-c", "-I", "lz4"]);
+    expect(compressPlan("tar.lz4", "/out/a.tar.lz4", ["foo"], "/src", which("tar", "lz4"), "linux").args.slice(0, 3)).toEqual(["-c", "-I", "lz4"]);
     expect(compressPlan("tar", "/out/a.tar", ["foo"], "/src").args.slice(0, 2)).toEqual(["-c", "-v"]);
   });
 

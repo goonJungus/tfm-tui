@@ -5,6 +5,7 @@ import { lstat, readdir, readlink } from "node:fs/promises";
 import { errMessage } from "../lib/uiutil";
 import path from "node:path";
 import { spawnSafe, type SpawnSafeOpts } from "./spawn-safe";
+import { isDarwin } from "./platform";
 
 // --- Archive engine: extension -> format detection, exact argv for tar/unzip/
 // zip/7z, listing for a total count, and a line-streaming child runner. Pure
@@ -140,11 +141,26 @@ export const detectArchiveFormat = (file: string): ArchiveFormat | null => {
 const zipCreateTool = (which: WhichFn): "zip" | "7z" => (which("zip") ? "zip" : "7z");
 const zipExtractTool = (which: WhichFn): "unzip" | "7z" => (which("unzip") ? "unzip" : "7z");
 
-const canCreate = (def: CompressionDef, which: WhichFn): boolean =>
-  def.kind === "zip" ? !!which("zip") || !!which("7z") : def.need.every((b) => !!which(b));
+// the tar filter dialect: GNU tar takes external compressors via
+// `-I <prog>`; bsdtar rejects `-I` but needs nothing on read (libarchive
+// sniffs the compression itself) and compresses lz4/brotli natively on
+// create via `-a` (pick the codec from the archive suffix). The other
+// filters (-z/-J/-j/--zstd/--lzma/--lzip/--lzop/-Z) mean the same on both.
+const tarFilter = (def: CompressionDef, platform: string, create: boolean): string[] => {
+  if (!isDarwin(platform) || def.filter[0] !== "-I") return def.filter;
+  return create ? ["-a"] : [];
+};
 
-const canExtractFmt = (def: CompressionDef, which: WhichFn): boolean =>
-  def.kind === "zip" ? !!which("unzip") || !!which("7z") : def.need.every((b) => !!which(b));
+// binaries a format actually needs on this platform (darwin's -I formats
+// are libarchive-native — the external prog is not involved)
+const defNeed = (def: CompressionDef, platform: string): string[] =>
+  isDarwin(platform) && def.filter[0] === "-I" ? ["tar"] : def.need;
+
+const canCreate = (def: CompressionDef, which: WhichFn, platform: string = process.platform): boolean =>
+  def.kind === "zip" ? !!which("zip") || !!which("7z") : defNeed(def, platform).every((b) => !!which(b));
+
+const canExtractFmt = (def: CompressionDef, which: WhichFn, platform: string = process.platform): boolean =>
+  def.kind === "zip" ? !!which("unzip") || !!which("7z") : defNeed(def, platform).every((b) => !!which(b));
 
 const listTool = (fmt: ArchiveFormat, which: WhichFn): string => {
   const def = defOf(fmt);
@@ -158,6 +174,7 @@ export const extractPlan = (
   file: string,
   destDir: string,
   which: WhichFn = Bun.which,
+  platform: string = process.platform,
 ): ToolSpec => {
   const def = defOf(fmt);
   if (def.kind === "tar")
@@ -167,7 +184,7 @@ export const extractPlan = (
     // the escape snapshot below catches any tool that doesn't)
     return {
       tool: "tar",
-      args: ["-x", "-v", ...def.filter, "-f", file, "-C", destDir, "--no-same-owner"],
+      args: ["-x", "-v", ...tarFilter(def, platform, false), "-f", file, "-C", destDir, "--no-same-owner"],
     };
   // -bb1: one line per entry — plain `7z x` emits a fixed header no matter
   // the entry count, freezing the file-count bar at 0 (same class as tar -v).
@@ -180,9 +197,14 @@ export const extractPlan = (
     : { tool: "7z", args: ["x", "-bb1", "-bso2", "-y", `-o${destDir}`, file] };
 };
 
-export const listArgs = (fmt: ArchiveFormat, file: string, which: WhichFn = Bun.which): string[] => {
+export const listArgs = (
+  fmt: ArchiveFormat,
+  file: string,
+  which: WhichFn = Bun.which,
+  platform: string = process.platform,
+): string[] => {
   const def = defOf(fmt);
-  if (def.kind === "tar") return ["-t", ...def.filter, "-f", file];
+  if (def.kind === "tar") return ["-t", ...tarFilter(def, platform, false), "-f", file];
   if (def.kind === "7z") return ["l", "-ba", file];
   return zipExtractTool(which) === "unzip" ? ["-Z1", file] : ["l", "-ba", file];
 };
@@ -198,12 +220,13 @@ export const compressPlan = (
   names: string[],
   parent: string,
   which: WhichFn = Bun.which,
+  platform: string = process.platform,
 ): ToolSpec => {
   const def = defOf(fmt);
   // a name starting with "-" would otherwise be parsed as an option (tar -v,
   // --files-from=…): tar/7z get an explicit `--`, zip an escaped "./" operand
   if (def.kind === "tar")
-    return { tool: "tar", args: ["-c", ...def.filter, "-v", "-f", outFile, "-C", parent, "--", ...names] };
+    return { tool: "tar", args: ["-c", ...tarFilter(def, platform, true), "-v", "-f", outFile, "-C", parent, "--", ...names] };
   // -bb1: one `+ name` line per added file — `zip -r` is chatty by default
   // but 7z is not, and without it the file-count bar never advances.
   // -bso2: same piped-stdout freeze as extract (entry log to stderr, live).
@@ -494,9 +517,14 @@ export const listArchiveEntries = async (
 
 export type ArchiveMember = { name: string; dir: boolean; size?: number };
 
-export const listMembersPlan = (fmt: ArchiveFormat, file: string, which: WhichFn = Bun.which): ToolSpec => {
+export const listMembersPlan = (
+  fmt: ArchiveFormat,
+  file: string,
+  which: WhichFn = Bun.which,
+  platform: string = process.platform,
+): ToolSpec => {
   const def = defOf(fmt);
-  if (def.kind === "tar") return { tool: "tar", args: ["-t", ...def.filter, "-f", file] };
+  if (def.kind === "tar") return { tool: "tar", args: ["-t", ...tarFilter(def, platform, false), "-f", file] };
   // -slt: structured `Path = …` / `Attributes = D …` / `Size = …` blocks (the
   // default `l` column layout is pain to split on names with spaces)
   if (def.kind === "7z") return { tool: "7z", args: ["l", "-slt", file] };
