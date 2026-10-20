@@ -5,6 +5,7 @@ import {
   classifyPath,
   executableChoiceLabels,
   isElfHead,
+  isMachOHead,
   isShebangHead,
 } from "./executable";
 import { mkdtempSync, writeFileSync, chmodSync } from "node:fs";
@@ -23,6 +24,16 @@ describe("executable heads", () => {
     const elf = Buffer.from([0x7f, 0x45, 0x4c, 0x46]);
     expect(isElfHead(elf)).toBe(true);
     expect(classifyExecutable(0o644, false, elf)).toEqual({ executable: true, needsChmod: true });
+  });
+  test("Mach-O without bit needs chmod (macOS binaries)", () => {
+    const m64 = Buffer.from([0xfe, 0xed, 0xfa, 0xcf]);
+    const fat = Buffer.from([0xca, 0xfe, 0xba, 0xbe]);
+    expect(isMachOHead(m64)).toBe(true);
+    expect(isMachOHead(fat)).toBe(true);
+    expect(isMachOHead(Buffer.from([0xfe, 0xed, 0xfa, 0xce]))).toBe(true);
+    expect(isMachOHead(Buffer.from("hell"))).toBe(false);
+    expect(classifyExecutable(0o644, false, m64)).toEqual({ executable: true, needsChmod: true });
+    expect(classifyExecutable(0o644, false, fat)).toEqual({ executable: true, needsChmod: true });
   });
   test("shebang without bit needs chmod", () => {
     const sh = Buffer.from([0x23, 0x21, 0x2f, 0x62]);

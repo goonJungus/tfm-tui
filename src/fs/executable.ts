@@ -10,9 +10,19 @@ export type ExecutableInfo = { executable: boolean; needsChmod: boolean };
 export const isElfHead = (head: Uint8Array): boolean =>
   head.length >= 4 && head[0] === 0x7f && head[1] === 0x45 && head[2] === 0x4c && head[3] === 0x46;
 
+// Mach-O magics (macOS): 32/64-bit in both byte orders, plus the universal
+// (fat) headers CA FE BA BE / CA FE BA BF.
+export const isMachOHead = (head: Uint8Array): boolean => {
+  if (head.length < 4) return false;
+  const be = (((head[0]! << 24) | (head[1]! << 16) | (head[2]! << 8) | head[3]!) >>> 0);
+  return (
+    be === 0xfeedface || be === 0xfeedfacf || be === 0xcefaedfe || be === 0xcffaedfe || be === 0xcafebabe || be === 0xcafebabf
+  );
+};
+
 export const isShebangHead = (head: Uint8Array): boolean => head.length >= 2 && head[0] === 0x23 && head[1] === 0x21;
 
-export const isRunnableHead = (head: Uint8Array): boolean => isElfHead(head) || isShebangHead(head);
+export const isRunnableHead = (head: Uint8Array): boolean => isElfHead(head) || isMachOHead(head) || isShebangHead(head);
 
 // pure core: mode bit wins; runnable content without the bit is needsChmod.
 // Dirs are never executables here (opening a dir navigates, never runs).

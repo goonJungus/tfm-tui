@@ -93,7 +93,7 @@ describe("publishPathsToSystemClipboard", () => {
         unref: () => {},
       };
     }) as unknown as Parameters<typeof publishPathsToSystemClipboard>[3];
-    publishPathsToSystemClipboard("copy", [{ path: "/home/me/a b.txt" }, { path: "/tmp/x" }], () => {}, fakeSpawn);
+    publishPathsToSystemClipboard("copy", [{ path: "/home/me/a b.txt" }, { path: "/tmp/x" }], () => {}, fakeSpawn, "linux");
     expect(argv).toEqual([]); // no -t: wl-copy advertises text/plain + UTF8_STRING
     expect(payload).toBe("/home/me/a b.txt\n/tmp/x");
   });
@@ -110,7 +110,7 @@ describe("publishPathsToSystemClipboard", () => {
         unref: () => {},
       };
     }) as unknown as Parameters<typeof publishPathsToSystemClipboard>[3];
-    publishPathsToSystemClipboard("cut", [{ path: "/tmp/x" }], () => {}, fakeSpawn);
+    publishPathsToSystemClipboard("cut", [{ path: "/tmp/x" }], () => {}, fakeSpawn, "linux");
     expect(argv).toEqual(["-selection", "clipboard", "-l", "10"]);
     expect(payload).toBe("/tmp/x");
   });
@@ -120,7 +120,7 @@ describe("sysClipTool", () => {
   test("Wayland wins when both displays are set", () => {
     process.env.WAYLAND_DISPLAY = "wayland-0";
     process.env.DISPLAY = ":0";
-    const t = sysClipTool();
+    const t = sysClipTool("linux");
     expect(t!.put).toBe("wl-copy");
     expect(t!.getArgs).toEqual(["-t", "x-special/gnome-copied-files"]);
     expect(t!.getTextArgs).toEqual([]);
@@ -129,7 +129,7 @@ describe("sysClipTool", () => {
   test("X11 xclip serves enough requests then exits (probes + fetch, no mid-paste expiry)", () => {
     delete process.env.WAYLAND_DISPLAY;
     process.env.DISPLAY = ":0";
-    const t = sysClipTool();
+    const t = sysClipTool("linux");
     expect(t!.put).toBe("xclip");
     expect(t!.putBase).toEqual(["-selection", "clipboard", "-l", "10"]);
     expect(t!.getTextArgs).toEqual(["-selection", "clipboard", "-o"]);
@@ -138,7 +138,18 @@ describe("sysClipTool", () => {
   test("no display at all → null", () => {
     delete process.env.WAYLAND_DISPLAY;
     delete process.env.DISPLAY;
-    expect(sysClipTool()).toBeNull();
+    expect(sysClipTool("linux")).toBeNull();
+  });
+
+  test("darwin → pbcopy/pbpaste regardless of display env", () => {
+    delete process.env.WAYLAND_DISPLAY;
+    delete process.env.DISPLAY;
+    const t = sysClipTool("darwin");
+    expect(t!.put).toBe("pbcopy");
+    expect(t!.get).toBe("pbpaste");
+    expect(t!.putBase).toEqual([]);
+    expect(t!.getArgs).toEqual([]);
+    expect(t!.getTextArgs).toEqual([]);
   });
 });
 

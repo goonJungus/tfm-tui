@@ -5,6 +5,7 @@
 // presentations: theme presets, tab-bar adaptive/on, show-hidden state sync.
 // No renderer imports — ctx carries the sinks. ---
 import { spawnSafe } from "../fs/spawn-safe";
+import { openerCommand } from "../fs/platform";
 import type { DefaultFileManagerOrchestration } from "../fs/default-filemanager";
 import { errMessage } from "../lib/uiutil";
 import { THEME_PRESETS } from "../config/themes";
@@ -465,7 +466,7 @@ export const makeSettingModel = (ctx: SettingsModelCtx) => {
       label: "edit config.toml…",
       blurb: "Open the settings file",
       run: () => {
-        spawnSafe("xdg-open", [configPath()], { stdio: "ignore", detached: true }, (err) =>
+        spawnSafe(openerCommand(), [configPath()], { stdio: "ignore", detached: true }, (err) =>
           ctx.warn(err.message, "config"),
         )?.unref();
       },

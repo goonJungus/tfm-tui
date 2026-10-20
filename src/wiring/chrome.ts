@@ -11,6 +11,7 @@ import { PassThrough } from "node:stream";
 import { startGpmInput } from "../fs/gpm";
 import { readdir } from "node:fs/promises";
 import { spawnSafe } from "../fs/spawn-safe";
+import { openerCommand } from "../fs/platform";
 import { loadSystemPlaces } from "../fs/places";
 import { buildMountArgs, buildUnmountArgs, gvfsRoot, takeGioPrompt, type GioPrompt } from "../fs/network";
 import { makeNetworkActions, type GioResult } from "../fs/netmount";
@@ -461,7 +462,7 @@ export const wireChrome = async (deps: {
     notify,
     upsertRecent: upsertRecentXbel,
     spawnOpen: (p, onFailed) => {
-      spawnSafe("xdg-open", [p], { stdio: "ignore", detached: true }, (err) => {
+      spawnSafe(openerCommand(), [p], { stdio: "ignore", detached: true }, (err) => {
         onFailed();
         dlog(`open ${p}: ${err.message}`);
         notify(`Can't open ${path.basename(p)} · ${err.message}`, "open", "error");

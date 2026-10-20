@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { makeUrlOpener } from "./open-url";
+import { openerCommand } from "./platform";
 
 describe("makeUrlOpener", () => {
-  test("opens the URL through xdg-open, silently on success", () => {
+  test("opens the URL through the platform opener, silently on success", () => {
     const spawns: Array<{ cmd: string; args: string[] }> = [];
     const notifies: unknown[][] = [];
     const { openUrl } = makeUrlOpener({
@@ -13,7 +14,8 @@ describe("makeUrlOpener", () => {
       notify: ((...a: unknown[]) => void notifies.push(a)) as never,
     });
     openUrl("https://opentui.com");
-    expect(spawns).toEqual([{ cmd: "xdg-open", args: ["https://opentui.com"] }]);
+    // the command name itself is pinned per-platform in platform.test.ts
+    expect(spawns).toEqual([{ cmd: openerCommand(), args: ["https://opentui.com"] }]);
     expect(notifies).toEqual([]);
   });
 

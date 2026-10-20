@@ -26,7 +26,15 @@ type ClipTool = {
   getTextArgs: string[];
 };
 
-export const sysClipTool = (): ClipTool | null => {
+export const sysClipTool = (platform: string = process.platform): ClipTool | null => {
+  if (platform === "darwin") {
+    // macOS: pbcopy/pbpaste are text-only — no MIME filter exists, so both
+    // reads use the plain form (the gnome-MIME first read just gets the same
+    // text and falls through to parsePlainPaths). File payloads other apps
+    // can paste need an NSPasteboard helper (port Phase 2); tfm's own
+    // bare-path publish round-trips through pbcopy unchanged.
+    return { get: "pbpaste", put: "pbcopy", putBase: [], getArgs: [], getTextArgs: [] };
+  }
   if (process.env.WAYLAND_DISPLAY) {
     return {
       get: "wl-paste",
@@ -98,8 +106,9 @@ export const publishPathsToSystemClipboard = (
   items: { path: string }[],
   log: ClipLog = () => {},
   spawnFn: typeof spawnSafe = spawnSafe,
+  platform: string = process.platform,
 ): void => {
-  const t = sysClipTool();
+  const t = sysClipTool(platform);
   if (!t || !items.length) return;
   const payload = items.map((i) => i.path).join("\n");
   try {
@@ -123,8 +132,11 @@ export const publishPathsToSystemClipboard = (
 // read a file payload from the system clipboard: Nautilus's gnome-copied-files
 // first, then tfm's own bare-path text publish (a second instance's clipboard
 // carries text/plain, not the gnome MIME). null when neither yields paths.
-export const readCopiedFilesFromSystemClipboard = async (log: ClipLog = () => {}): Promise<CopiedFiles | null> => {
-  const t = sysClipTool();
+export const readCopiedFilesFromSystemClipboard = async (
+  log: ClipLog = () => {},
+  platform: string = process.platform,
+): Promise<CopiedFiles | null> => {
+  const t = sysClipTool(platform);
   if (!t) {
     log("paste: no system clipboard tool");
     return null;
