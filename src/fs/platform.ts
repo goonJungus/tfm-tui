@@ -10,16 +10,32 @@ export const isDarwin = (platform: string = process.platform): boolean => platfo
 
 // the native helper's location (LaunchServices handler enumeration +
 // FileManager trash; source in native/macos/, built by its build.sh). The
-// TFM_MAC_HELPER env override wins (tests, relocated installs); otherwise
-// the in-tree build product two levels up from src/fs. Null when absent —
-// the darwin features that need it degrade instead of breaking (the Open
-// With picker empties; trash falls back to the plain rename move).
+// TFM_MAC_HELPER env override wins (tests, relocated installs); a compiled
+// binary finds the helper beside itself (the release layout); from source,
+// the in-tree build product two levels up from src/fs. The candidate list
+// is a pure function so the order is testable without the filesystem. Null
+// when absent everywhere — the darwin features that need it degrade
+// instead of breaking (the Open With picker empties; trash falls back to
+// the plain rename move).
+export const macHelperCandidates = (
+  env: string | undefined,
+  execDir: string,
+  metaDir: string,
+): string[] => {
+  const list: string[] = [];
+  if (env) list.push(env);
+  list.push(path.join(execDir, "tfm-mac-helper"));
+  list.push(path.join(metaDir, "..", "..", "bin", "tfm-mac-helper"));
+  return list;
+};
+
 export const macHelperPath = (platform: string = process.platform): string | null => {
   if (!isDarwin(platform)) return null;
   const env = process.env.TFM_MAC_HELPER;
   if (env) return env;
-  const p = path.join(import.meta.dir, "..", "..", "bin", "tfm-mac-helper");
-  return existsSync(p) ? p : null;
+  for (const p of macHelperCandidates(undefined, path.dirname(process.execPath), import.meta.dir))
+    if (existsSync(p)) return p;
+  return null;
 };
 
 // default-application opener: `open` on macOS, `xdg-open` on Linux — same

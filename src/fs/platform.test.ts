@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { deviceSpawn, isDarwin, openerCommand } from "./platform";
+import path from "node:path";
+import { deviceSpawn, isDarwin, macHelperCandidates, openerCommand } from "./platform";
 
 describe("platform seam", () => {
   test("opener command per platform", () => {
@@ -11,6 +12,17 @@ describe("platform seam", () => {
     expect(isDarwin("darwin")).toBe(true);
     expect(isDarwin("linux")).toBe(false);
     expect(isDarwin("win32")).toBe(false);
+  });
+
+  test("macHelper candidates: env, beside the executable (release layout), source tree", () => {
+    expect(macHelperCandidates("/x/helper", "/opt/tfm", "/repo/src/fs")).toEqual([
+      "/x/helper",
+      path.join("/opt/tfm", "tfm-mac-helper"),
+      path.join("/repo/src/fs", "..", "..", "bin", "tfm-mac-helper"),
+    ]);
+    expect(macHelperCandidates(undefined, "/opt/tfm", "/repo/src/fs")[0]).toBe(
+      path.join("/opt/tfm", "tfm-mac-helper"),
+    );
   });
 });
 
