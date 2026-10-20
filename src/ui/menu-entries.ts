@@ -2,7 +2,6 @@
 // menus contain, as a factory with injected action callbacks (same seam as
 // grid-input.ts). The floating menu widget itself lives in ./ui-menu. ---
 
-import path from "node:path";
 import { trashLayout } from "../fs/fsutil";
 import { setBookmarked, loadSystemPlaces, type EjectSpec, type Place } from "../fs/places";
 import { RECENT_URI, STARRED_URI, isArchiveUri, isVirtualUri } from "../fs/uri";
