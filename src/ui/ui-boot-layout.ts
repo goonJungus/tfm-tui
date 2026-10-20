@@ -35,10 +35,20 @@ import {
 //   tfm   = the ORIGINAL title: accent ASCII wordmark + "terminal file manager"
 //   files = the same wordmark style spelling "Files", sidebar white, no tagline
 //   none  = the block keeps its rows but paints nothing
-// Both children are built in EVERY mode and flipped by visibility, so a mode
+//   logo  = the platform logo glyph in the accent color, no text (below)
+// All children are built in EVERY mode and flipped by visibility, so a mode
 // change is a retheme paint (.text/.color/.visible — no node creation).
 
-export const buildTitle = (opts: { width: number; colors: Theme; mode?: SidebarTitleMode }): SlotElement => {
+// Nerd Font brand glyphs: fa-apple / linux-archlinux. The terminal font
+// supplies the artwork; a font without them shows the usual fallback box.
+export const titleLogoGlyph = (platform: string): string => (platform === "darwin" ? "\u{F179}" : "\u{F303}");
+
+export const buildTitle = (opts: {
+  width: number;
+  colors: Theme;
+  mode?: SidebarTitleMode;
+  platform?: string;
+}): SlotElement => {
   const mode = opts.mode ?? "tfm";
   const files = mode === "files";
   return Box(
@@ -68,6 +78,15 @@ export const buildTitle = (opts: { width: number; colors: Theme; mode?: SidebarT
       content: " terminal file manager",
       fg: opts.colors.sidebarFgMuted,
       visible: mode === "tfm",
+    }),
+    Text({
+      id: "tfm-title-logo",
+      content: titleLogoGlyph(opts.platform ?? process.platform),
+      fg: opts.colors.accent,
+      visible: mode === "logo",
+      // centered in the box's inner width (the box pads 1 on the left)
+      width: Math.max(1, opts.width - 1),
+      textAlign: "center",
     }),
   );
 };

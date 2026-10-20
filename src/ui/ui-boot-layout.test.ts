@@ -54,11 +54,11 @@ describe("tab strip containers", () => {
 describe("sidebar title block", () => {
   const theme = defaultConfig.theme;
 
-  const mountTitle = async (mode: "tfm" | "files" | "none") => {
+  const mountTitle = async (mode: "tfm" | "files" | "none" | "logo", platform?: string) => {
     // one title block per assertion: the ids are fixed, so a previously
     // mounted block would win findDescendantById
     node("tfm-title-box")?.destroy?.();
-    t.renderer.root.add(buildTitle({ width: 24, colors: theme, mode }));
+    t.renderer.root.add(buildTitle({ width: 24, colors: theme, mode, platform }));
     await t.renderOnce();
   };
   const node = (id: string): any => t.renderer.root.findDescendantById(id);
@@ -96,6 +96,23 @@ describe("sidebar title block", () => {
   test("none mode hides the block but keeps it in the layout", async () => {
     await mountTitle("none");
     expect(node("tfm-title-box").visible).toBe(false);
+  });
+
+  test("logo mode shows the platform glyph in the accent, no wordmark or tagline", async () => {
+    await mountTitle("logo", "darwin");
+    expect(node("tfm-title-logo").visible).toBe(true);
+    expect([...node("tfm-title-logo").fg.toInts()]).toEqual(hexInts(theme.accent));
+    expect(node("tfm-title-font").visible).toBe(false);
+    expect(node("tfm-title-sub").visible).toBe(false);
+    expect(node("tfm-title-box").height).toBe(5);
+    const frame = t.captureCharFrame();
+    expect(frame).toContain("\u{F179}");
+    expect(frame).not.toContain("terminal file manager");
+  });
+
+  test("logo glyph is the Arch mark off macOS", async () => {
+    await mountTitle("logo", "linux");
+    expect(t.captureCharFrame()).toContain("\u{F303}");
   });
 });
 

@@ -222,7 +222,7 @@ export type IconMode = "opaque" | "transparent" | "transparent-partial";
 // "Files" in the sidebar white, no tagline; `none` = the block keeps its rows
 // but paints nothing. Was a bool (true = wordmark, false = none) — a boolean
 // value still migrates.
-export type SidebarTitleMode = "tfm" | "files" | "none";
+export type SidebarTitleMode = "tfm" | "files" | "none" | "logo";
 
 // icon-raster style. `filled` = solid icon rasters (default); `outline` =
 // hollow icon rasters where the set ships an outline sibling (icons with no
@@ -543,9 +543,9 @@ const UI_ROWS: SchemaRow[] = [
     section: "ui",
     tomlKey: "sidebar-title",
     prop: "sidebarTitle",
-    values: ["tfm", "files", "none"],
+    values: ["tfm", "files", "none", "logo"],
     def: "tfm",
-    doc: '"tfm" = the accent ASCII "tfm" wordmark + tagline above the places sidebar; "files" = the same style spelling "Files" in the sidebar white; "none" = keep the space, show nothing',
+    doc: '"tfm" = the accent ASCII "tfm" wordmark + tagline above the places sidebar; "files" = the same style spelling "Files" in the sidebar white; "none" = keep the space, show nothing; "logo" = the platform logo glyph (Apple on macOS, Arch on Linux) in the accent color, no text',
     label: "sidebar title",
     blurb: "What sits above the sidebar",
     group: "layout",

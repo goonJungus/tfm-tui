@@ -88,8 +88,8 @@ export const makeRetheme = (ctx: RethemeCtx) => {
   // theme-flip path. Without this, switching modes in Settings (a non-theme
   // knob) showed nothing until a restart, because a mode flip only reached
   // renderAll. tfm keeps the original accent wordmark + tagline; files is the
-  // white "Files" wordmark with no tagline. Both nodes are built in every
-  // mode, so the paint is a pure flip.
+  // white "Files" wordmark with no tagline; logo is the platform glyph.
+  // All nodes are built in every mode, so the paint is a pure flip.
   const paintTitle = (colors: Theme): void => {
     const mode = ctx.config.ui.sidebarTitle;
     const files = mode === "files";
@@ -106,6 +106,10 @@ export const makeRetheme = (ctx: RethemeCtx) => {
     setOnId("tfm-title-sub", (n) => {
       n.visible = mode === "tfm";
       n.fg = colors.sidebarFgMuted;
+    });
+    setOnId("tfm-title-logo", (n) => {
+      n.visible = mode === "logo";
+      n.fg = colors.accent;
     });
   };
 
