@@ -14,7 +14,7 @@ import { spawnSafe } from "../fs/spawn-safe";
 import { isDarwin, openerCommand } from "../fs/platform";
 import { loadSystemPlaces } from "../fs/places";
 import { buildMountArgs, buildUnmountArgs, gvfsRoot, takeGioPrompt, type GioPrompt } from "../fs/network";
-import { makeNetworkActions, type GioResult } from "../fs/netmount";
+import { makeNetworkActions, makeNetworkActionsDarwin, type GioResult } from "../fs/netmount";
 import { makeMenu, MENU_W } from "../ui/ui-menu";
 import { makeChrome } from "../ui/ui-chrome";
 import { makeToolbar, toolbarItemIds, crumbItemIds } from "../ui/ui-toolbar";
@@ -589,24 +589,50 @@ export const wireChrome = async (deps: {
     return { code, stdout: "", stderr: timedOut ? stderr || "timed out" : stderr };
   };
 
-  const network = makeNetworkActions({
-    gvfsRoot,
-    // mount can prompt for credentials; unmount never does
-    mount: (uri) => runGio(buildMountArgs(uri), true),
-    unmount: (uri) => runGio(buildUnmountArgs(uri), false),
-    readdir: readdir,
-    notify: (m, t, l) => {
-      try {
-        notify(m, t, l);
-      } catch {}
-    },
-    log: (m) => dlog(m),
-  });
+  // macOS network sink: Finder owns mounting (and the credential UI), the
+  // mount table is the enumeration source, `umount` disconnects.
+  const runCmdCapture = async (argv: string[]): Promise<GioResult> => {
+    try {
+      const proc = Bun.spawn(argv, { stdin: "ignore", stdout: "pipe", stderr: "pipe", timeout: GIO_TIMEOUT_MS });
+      const [stdout, stderr] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
+      await proc.exited;
+      return { code: proc.exitCode ?? 1, stdout, stderr };
+    } catch (err) {
+      return { code: 127, stdout: "", stderr: errMessage(err) };
+    }
+  };
+  const asStringLiteral = (s: string): string => `"${s.replace(/(["\\])/g, "\\$1")}"`;
+  const network = isDarwin()
+    ? makeNetworkActionsDarwin({
+        mount: (uri) =>
+          runCmdCapture(["osascript", "-e", `tell application "Finder" to mount volume ${asStringLiteral(uri)}`]),
+        unmount: (mountPath) => runCmdCapture(["umount", mountPath]),
+        readMounts: async () => (await runCmdCapture(["/sbin/mount"])).stdout,
+        notify: (m, t, l) => {
+          try {
+            notify(m, t, l);
+          } catch {}
+        },
+        log: (m) => dlog(m),
+      })
+    : makeNetworkActions({
+        gvfsRoot,
+        // mount can prompt for credentials; unmount never does
+        mount: (uri) => runGio(buildMountArgs(uri), true),
+        unmount: (uri) => runGio(buildUnmountArgs(uri), false),
+        readdir: readdir,
+        notify: (m, t, l) => {
+          try {
+            notify(m, t, l);
+          } catch {}
+        },
+        log: (m) => dlog(m),
+      });
 
   connectServerImpl = async (raw?: string): Promise<void> => {
     // fail fast when gio is absent (minimal/container distros) — otherwise
     // the URL prompt opens first and only the mount spawn fails afterwards
-    if (!Bun.which("gio")) {
+    if (!isDarwin() && !Bun.which("gio")) {
       notify("Can't connect · gio missing", "network", "error");
       return;
     }
@@ -628,7 +654,7 @@ export const wireChrome = async (deps: {
   };
 
   disconnectServerImpl = async (mountPath: string): Promise<void> => {
-    if (!Bun.which("gio")) {
+    if (!isDarwin() && !Bun.which("gio")) {
       notify("Can't disconnect · gio missing", "network", "error");
       return;
     }

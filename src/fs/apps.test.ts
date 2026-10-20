@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { desktopAppName, appsForFile, makeLaunchAppAsRoot, makeOpenAsRoot, parseGioMime, runOutShort } from "./apps";
+import { desktopAppName, appsForFile, makeLaunchAppAsRoot, makeOpenAsRoot, parseGioMime, parseHelperHandlers, runOutShort } from "./apps";
 
 const oldDataHome = process.env.XDG_DATA_HOME;
 afterEach(() => {
@@ -82,7 +82,7 @@ describe("appsForFile", () => {
           ? "text/plain"
           : "Default application for “text/plain”: tfm-openwith.desktop\n" +
             "Registered applications:\n\ttfm-openwith.desktop\n\tdefinitely-missing.desktop\n";
-      const apps = await appsForFile("/tmp/x.txt", run);
+      const apps = await appsForFile("/tmp/x.txt", run, undefined, "linux");
       expect(apps.map((a) => a.name)).toEqual(["Fake Editor"]);
       expect(apps[0]!.file).toBe(path.join(dir, "tfm-openwith.desktop"));
     } finally {
@@ -91,7 +91,7 @@ describe("appsForFile", () => {
   });
 
   test("a failed mime probe yields no apps", async () => {
-    expect(await appsForFile("/x.txt", async () => "")).toEqual([]);
+    expect(await appsForFile("/x.txt", async () => "", undefined, "linux")).toEqual([]);
   });
 
   test("unreadable file falls back to ext→mime instead of yielding nothing", async () => {
@@ -105,7 +105,7 @@ describe("appsForFile", () => {
         cmd[0] === "xdg-mime"
           ? "" // content probe fails (EACCES on a root-owned file)
           : "Default application for “text/plain”: tfm-fb.desktop\n";
-      const apps = await appsForFile("/root/owned.txt", run, () => "text/plain");
+      const apps = await appsForFile("/root/owned.txt", run, () => "text/plain", "linux");
       expect(apps.map((a) => a.name)).toEqual(["Fallback Editor"]);
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -118,6 +118,7 @@ describe("appsForFile", () => {
         "/root/owned",
         async () => "",
         () => undefined,
+        "linux",
       ),
     ).toEqual([]);
   });
@@ -136,7 +137,7 @@ describe("appsForFile", () => {
         if (cmd.includes("inode/x-empty")) return "No default applications for “inode/x-empty”\n";
         return "Default application for “text/plain”: tfm-rescue.desktop\n";
       };
-      const apps = await appsForFile("/home/clark/Downloads/test.txt", run, () => "text/plain");
+      const apps = await appsForFile("/home/clark/Downloads/test.txt", run, () => "text/plain", "linux");
       expect(apps.map((a) => a.name)).toEqual(["Rescue Editor"]);
       expect(seen.filter((c) => c[0] === "gio").map((c) => c[c.length - 1])).toEqual(["inode/x-empty", "text/plain"]);
     } finally {
@@ -159,7 +160,7 @@ describe("appsForFile", () => {
       };
       const apps = await appsForFile("/home/a/note.txt", run, () => {
         throw new Error("fallback must not run");
-      });
+      }, "linux");
       expect(apps.map((a) => a.name)).toEqual(["Direct Editor"]);
       expect(seen.filter((c) => c[0] === "gio")).toHaveLength(1);
     } finally {
@@ -179,7 +180,7 @@ describe("appsForFile", () => {
         if (cmd.includes("application/x-throwing")) throw new Error("gio exploded");
         return "Default application for “text/plain”: tfm-throwfb.desktop\n";
       };
-      const apps = await appsForFile("/home/a/note.txt", run, () => "text/plain");
+      const apps = await appsForFile("/home/a/note.txt", run, () => "text/plain", "linux");
       expect(apps.map((a) => a.name)).toEqual(["Throw Fallback"]);
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -196,6 +197,7 @@ describe("makeOpenAsRoot", () => {
     const notes: string[] = [];
     const logs: string[] = [];
     const open = makeOpenAsRoot({
+      platform: "linux",
       ensureSudo: gate,
       exec:
         exec ??
@@ -267,6 +269,7 @@ describe("makeLaunchAppAsRoot", () => {
     const notes: string[] = [];
     const logs: string[] = [];
     const launch = makeLaunchAppAsRoot({
+      platform: "linux",
       ensureSudo: gate,
       exec:
         exec ??
@@ -303,5 +306,67 @@ describe("makeLaunchAppAsRoot", () => {
     expect(h.notes.length).toBe(1);
     expect(h.notes[0]).toContain("open:Can't open f with Micro as root");
     expect(h.notes[0]).toContain("Operation not supported");
+  });
+});
+
+describe("darwin open-with (helper)", () => {
+  test("parseHelperHandlers maps the helper JSON to choices, drops junk rows", () => {
+    const out = JSON.stringify([
+      { id: "org.geany.geany", name: "Geany", path: "/Applications/Geany.app", default: true },
+      { id: "com.apple.TextEdit", name: "TextEdit", path: "/System/Applications/TextEdit.app", default: false },
+      { name: "NoPath" },
+      { path: "/Applications/Noname.app" },
+    ]);
+    expect(parseHelperHandlers(out)).toEqual([
+      { id: "org.geany.geany", name: "Geany", file: "/Applications/Geany.app" },
+      { id: "com.apple.TextEdit", name: "TextEdit", file: "/System/Applications/TextEdit.app" },
+    ]);
+    expect(parseHelperHandlers("not json")).toEqual([]);
+    expect(parseHelperHandlers("{}")).toEqual([]);
+  });
+
+  test("appsForFile on darwin asks the helper, never gio", async () => {
+    const old = process.env.TFM_MAC_HELPER;
+    process.env.TFM_MAC_HELPER = "/fake/tfm-mac-helper";
+    try {
+      const seen: string[][] = [];
+      const apps = await appsForFile(
+        "/x/note.txt",
+        async (cmd) => {
+          seen.push(cmd);
+          return JSON.stringify([{ id: "a.b", name: "App", path: "/Applications/App.app", default: true }]);
+        },
+        () => "text/plain",
+        "darwin",
+      );
+      expect(seen).toEqual([["/fake/tfm-mac-helper", "handlers", "/x/note.txt"]]);
+      expect(apps).toEqual([{ id: "a.b", name: "App", file: "/Applications/App.app" }]);
+    } finally {
+      if (old === undefined) delete process.env.TFM_MAC_HELPER;
+      else process.env.TFM_MAC_HELPER = old;
+    }
+  });
+
+  test("open-as-root on darwin refuses without gating or execing", async () => {
+    const notes: string[] = [];
+    let gated = 0;
+    let execed = 0;
+    const open = makeOpenAsRoot({
+      platform: "darwin",
+      ensureSudo: async () => {
+        gated++;
+        return true;
+      },
+      exec: async () => {
+        execed++;
+        return { status: 0, stderr: "" };
+      },
+      notify: (m, t, l) => void notes.push(`${t}:${l}:${m}`),
+      log: () => {},
+    });
+    await open("/root/owned.txt");
+    expect(gated).toBe(0);
+    expect(execed).toBe(0);
+    expect(notes).toEqual(["open:error:Opening as root isn't supported on macOS"]);
   });
 });

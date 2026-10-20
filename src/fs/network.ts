@@ -1,11 +1,15 @@
+import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { isWithinOrEqual } from "./fsutil";
+import { isDarwin } from "./platform";
 
-// --- Network locations: pure primitives for the gvfs bridge. tfm does not
-// implement a remote VFS — `gio mount` mounts the share through GVFS and the
-// FUSE path under $XDG_RUNTIME_DIR/gvfs is an ordinary local directory, so
-// every fs module (listing, transfer, preview) works unchanged. This module is
-// IO-free: input parsing, argv builders, gvfs-name <-> URI mapping. ---
+// --- Network locations: primitives for the gvfs bridge (Linux) and the
+// /Volumes mount model (macOS). tfm does not implement a remote VFS — the
+// platform mounter (gio/GVFS, Finder) mounts the share and its path is an
+// ordinary local directory, so every fs module (listing, transfer, preview)
+// works unchanged. Everything here is pure input parsing / argv building /
+// name mapping, except mountTableSync — the one platform-fact read, kept
+// next to its parser like fsutil's /proc/mounts read. ---
 
 // schemes `gio mount` can handle out of the box
 export const NETWORK_SCHEMES = ["sftp", "ssh", "ftp", "smb", "dav", "davs", "nfs", "afp", "mtp", "gphoto2"] as const;
@@ -29,7 +33,61 @@ export const gvfsRoot = (): string => {
   return `/run/user/${uid}/gvfs`;
 };
 
-export const isNetworkPath = (p: string): boolean => isWithinOrEqual(p, gvfsRoot());
+// --- macOS mount table (BSD `mount` output) ---
+// Lines look like: `//user@host/share on /Volumes/share (smbfs, nodev, …)`.
+// The mountpoint may contain spaces; the source may not contain " on ".
+export type MountTableEntry = { source: string; mountpoint: string; fstype: string };
+
+export const parseMountTable = (text: string): MountTableEntry[] => {
+  const out: MountTableEntry[] = [];
+  for (const line of text.split("\n")) {
+    const on = line.indexOf(" on ");
+    if (on < 0) continue;
+    const paren = line.lastIndexOf(" (");
+    if (paren < 0) continue;
+    const source = line.slice(0, on);
+    const mountpoint = line.slice(on + 4, paren);
+    const fstype = line.slice(paren + 2).split(",")[0]?.trim() ?? "";
+    if (source && mountpoint && fstype) out.push({ source, mountpoint, fstype });
+  }
+  return out;
+};
+
+// filesystem types that mean "this /Volumes mount is a network share"
+export const NETWORK_FSTYPES: ReadonlySet<string> = new Set(["smbfs", "nfs", "afpfs", "webdav"]);
+
+export const mountTableSync = (): string => {
+  try {
+    return execFileSync("/sbin/mount", [], { encoding: "utf8", timeout: 2000 });
+  } catch {
+    return "";
+  }
+};
+
+// best-effort inverse of a mount: the server URI a mountpoint came from.
+// smbfs sources are `//user@host/share`; nfs sources are `host:/export`.
+// afp sources are opaque ids — no URI (null), the mount is label-only.
+export const darwinMountUri = (source: string, fstype: string): string | null => {
+  if (fstype === "smbfs" && source.startsWith("//")) return `smb:${source}`;
+  if (fstype === "nfs") {
+    const colon = source.indexOf(":");
+    if (colon > 0) return `nfs://${source.slice(0, colon)}${source.slice(colon + 1)}`;
+  }
+  if (source.startsWith("afp://")) return source;
+  return null;
+};
+
+// Linux: a path is network iff it lives under the gvfs FUSE root. macOS:
+// iff it lives under a network-typed mount (the mount table is the only
+// authority — /Volumes also holds local disks). mountText is the test seam
+// for the darwin branch.
+export const isNetworkPath = (p: string, platform: string = process.platform, mountText?: string): boolean => {
+  if (isDarwin(platform)) {
+    const entries = parseMountTable(mountText ?? mountTableSync());
+    return entries.some((e) => NETWORK_FSTYPES.has(e.fstype) && isWithinOrEqual(p, e.mountpoint));
+  }
+  return isWithinOrEqual(p, gvfsRoot());
+};
 
 const prettify = (uri: string): string => {
   const withoutScheme = uri.replace(/^[a-z][a-z0-9+.-]*:\/\//i, "").replace(/\/+$/, "");

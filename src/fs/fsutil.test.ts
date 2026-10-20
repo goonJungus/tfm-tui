@@ -523,13 +523,20 @@ describe("darwin trash layout", () => {
   // $XDG_DATA_HOME (the file-wide SANDBOX). Sandbox HOME for this block.
   const fakeHome = mktmp("tfm-darwin-home-");
   let oldHome: string | undefined;
+  let oldHelper: string | undefined;
   beforeAll(() => {
     oldHome = process.env.HOME;
     process.env.HOME = fakeHome;
+    // keep the real helper (built into bin/ on the Mac) out of these
+    // sandboxed tests — the plain claim+move path is what's under test here
+    oldHelper = process.env.TFM_MAC_HELPER;
+    process.env.TFM_MAC_HELPER = "/nonexistent/tfm-mac-helper";
   });
   afterAll(() => {
     if (oldHome === undefined) delete process.env.HOME;
     else process.env.HOME = oldHome;
+    if (oldHelper === undefined) delete process.env.TFM_MAC_HELPER;
+    else process.env.TFM_MAC_HELPER = oldHelper;
     rmSync(fakeHome, { recursive: true, force: true });
   });
   const infoDir = () => path.join(SANDBOX, "tfm", "trash-info", "home");
@@ -562,6 +569,47 @@ describe("darwin trash layout", () => {
     expect(await xdgTrashMove(a, "darwin")).toBe(path.join(fakeHome, ".Trash", "same.txt"));
     expect(await xdgTrashMove(b, "darwin")).toBe(path.join(fakeHome, ".Trash", "same.txt.2"));
     expect(existsSync(path.join(infoDir(), "same.txt.2.trashinfo"))).toBe(true);
+  });
+
+  test("helper trash: system move wins, sidecar follows the resulting name", async () => {
+    // a fake helper that mimics FileManager.trashItem: moves into
+    // $HOME/.Trash with Finder-style " 2" collision naming, prints the path
+    const fake = path.join(fakeHome, "fake-helper.sh");
+    writeFileSync(
+      fake,
+      `#!/bin/sh\nmkdir -p "$HOME/.Trash"\nbase=$(basename "$2")\ndest="$HOME/.Trash/$base"\nif [ -e "$dest" ]; then dest="$HOME/.Trash/$base 2"; fi\nmv "$2" "$dest"\nprintf '%s\\n' "$dest"\n`,
+    );
+    chmodSync(fake, 0o755);
+    const a = path.join(fakeHome, "h1", "dup.txt");
+    const b = path.join(fakeHome, "h2", "dup.txt");
+    W(a);
+    W(b);
+    process.env.TFM_MAC_HELPER = fake;
+    try {
+      expect(await xdgTrashMove(a, "darwin")).toBe(path.join(fakeHome, ".Trash", "dup.txt"));
+      // the system renamed the second one — the sidecar keys off THAT name
+      expect(await xdgTrashMove(b, "darwin")).toBe(path.join(fakeHome, ".Trash", "dup.txt 2"));
+      expect(existsSync(path.join(infoDir(), "dup.txt 2.trashinfo"))).toBe(true);
+      const info = readFileSync(path.join(infoDir(), "dup.txt 2.trashinfo"), "utf8");
+      expect(info).toContain(`Path=${encodeTrashPath(b)}`);
+    } finally {
+      process.env.TFM_MAC_HELPER = "/nonexistent/tfm-mac-helper";
+    }
+  });
+
+  test("helper failure falls back to the plain claim+move", async () => {
+    const fake = path.join(fakeHome, "fail-helper.sh");
+    writeFileSync(fake, "#!/bin/sh\nexit 1\n");
+    chmodSync(fake, 0o755);
+    const src = path.join(fakeHome, "docs", "fallback.txt");
+    W(src);
+    process.env.TFM_MAC_HELPER = fake;
+    try {
+      expect(await xdgTrashMove(src, "darwin")).toBe(path.join(fakeHome, ".Trash", "fallback.txt"));
+      expect(existsSync(path.join(infoDir(), "fallback.txt.trashinfo"))).toBe(true);
+    } finally {
+      process.env.TFM_MAC_HELPER = "/nonexistent/tfm-mac-helper";
+    }
   });
 
   test("rmTrashInfoForPath removes the darwin sidecar", async () => {

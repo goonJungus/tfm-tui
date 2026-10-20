@@ -144,7 +144,7 @@ export const makeTrashOps = (sink: TrashOpsSink) => {
     // network shares have no usable trash: xdgTrashMove would write a LOCAL
     // .trashinfo pointing at a FUSE path that dies on unmount (unrestorable,
     // remote file gone) — refuse instead of pretending it worked
-    if (paths.some(isNetworkPath)) {
+    if (paths.some((p) => isNetworkPath(p, platform))) {
       sink.notify("Can't trash on network", "trash", "error");
       return Promise.resolve();
     }

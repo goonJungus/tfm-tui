@@ -3,6 +3,7 @@ import os from "node:os";
 import { errMessage } from "../lib/uiutil";
 import path from "node:path";
 import { spawnSafe } from "./spawn-safe";
+import { isDarwin, macHelperPath } from "./platform";
 import { runSudo, sudoLaunchArgv, sudoOpenArgv } from "./elevate";
 import { extOf, mimeForExt } from "./filetype";
 import type { NotifyLevel } from "../lib/notify-level";
@@ -53,8 +54,17 @@ export const desktopFilePath = (desktopId: string): string | null => {
   return null;
 };
 
-// what xdg-open would launch for p: mime probe → default handler → app name
-export const appForFile = async (p: string): Promise<string> => {
+// what the default open would launch for p, as a human app name (the "open"
+// toast names it). Linux: mime probe → default handler → desktop name.
+// macOS: the helper's handler list is default-first, so its head is the
+// default app.
+export const appForFile = async (p: string, platform: string = process.platform): Promise<string> => {
+  if (isDarwin(platform)) {
+    const helper = macHelperPath(platform);
+    if (!helper) return "";
+    const apps = parseHelperHandlers(await runOutShort([helper, "handlers", p]));
+    return apps[0]?.name ?? "";
+  }
   try {
     const mime = await runOutShort(["xdg-mime", "query", "filetype", p]);
     if (mime) return await desktopAppName(await runOutShort(["xdg-mime", "query", "default", mime]));
@@ -79,6 +89,26 @@ export const parseGioMime = (out: string): string[] => {
 
 export type AppChoice = { id: string; name: string; file: string };
 
+// the helper's `handlers` JSON → picker choices. `file` carries the .app
+// path on macOS (what `open -a` launches), the .desktop path on Linux —
+// one field, the launchable locator for the platform. Malformed output
+// (helper missing/old) degrades to an empty picker, never a throw.
+export const parseHelperHandlers = (out: string): AppChoice[] => {
+  try {
+    const arr: unknown = JSON.parse(out);
+    if (!Array.isArray(arr)) return [];
+    const choices: AppChoice[] = [];
+    for (const a of arr as { id?: unknown; name?: unknown; path?: unknown }[]) {
+      if (typeof a?.path === "string" && a.path && typeof a?.name === "string" && a.name) {
+        choices.push({ id: typeof a.id === "string" ? a.id : "", name: a.name, file: a.path });
+      }
+    }
+    return choices;
+  } catch {
+    return [];
+  }
+};
+
 // launchable handlers for a file: default + registered apps that resolve to a
 // real .desktop file. `run` is injectable so tests never shell out. Content
 // probe first (accurate for shebangs/odd bytes); when it fails (EACCES on a
@@ -90,7 +120,19 @@ export const appsForFile = async (
   p: string,
   run: (cmd: string[]) => Promise<string> = runOutShort,
   mimeByExt: (ext: string) => string | undefined = mimeForExt,
+  platform: string = process.platform,
 ): Promise<AppChoice[]> => {
+  // macOS: LaunchServices enumeration lives in the native helper — no
+  // mime probing, the helper answers for the file itself
+  if (isDarwin(platform)) {
+    const helper = macHelperPath(platform);
+    if (!helper) return [];
+    try {
+      return parseHelperHandlers(await run([helper, "handlers", p]));
+    } catch {
+      return [];
+    }
+  }
   const collect = async (mime: string): Promise<AppChoice[]> => {
     const ids = parseGioMime(await run(["gio", "mime", mime]));
     const out: AppChoice[] = [];
@@ -124,9 +166,19 @@ export const appsForFile = async (
   }
 };
 
-// fire-and-forget launch through gio (detached so the app outlives the spawn)
-export const launchApp = (desktopFile: string, file: string, onFail?: (e: Error) => void): void => {
-  spawnSafe("gio", ["launch", desktopFile, file], { stdio: "ignore", detached: true }, onFail)?.unref();
+// fire-and-forget launch of a chosen app (detached so the app outlives the
+// spawn). Linux: `gio launch <desktop file>`; macOS: `open -a <app path>`.
+export const launchApp = (
+  appRef: string,
+  file: string,
+  onFail?: (e: Error) => void,
+  platform: string = process.platform,
+): void => {
+  if (isDarwin(platform)) {
+    spawnSafe("open", ["-a", appRef, file], { stdio: "ignore", detached: true }, onFail)?.unref();
+    return;
+  }
+  spawnSafe("gio", ["launch", appRef, file], { stdio: "ignore", detached: true }, onFail)?.unref();
 };
 
 // Shared gate+exec core behind both escalation primitives below: one password
@@ -138,6 +190,8 @@ type ElevatedDeps = {
   exec?: (argv: string[]) => Promise<{ status: number | null; stderr: string }>;
   notify: (msg: string, title?: string, level?: NotifyLevel) => void;
   log: (msg: string) => void;
+  // platform override (tests pin it; wiring leaves it)
+  platform?: string;
 };
 
 const runElevated = async (
@@ -149,6 +203,13 @@ const runElevated = async (
   openedMsg: string,
   failedPrefix: string,
 ): Promise<void> => {
+  // macOS: GUI apps as root are broken-by-design (no window server session
+  // for root) — refuse honestly instead of spawning a doomed sudo open
+  if (isDarwin(deps.platform)) {
+    deps.log(`${tag} refused on darwin: GUI apps can't run as root`);
+    deps.notify("Opening as root isn't supported on macOS", "open", "error");
+    return;
+  }
   const exec =
     deps.exec ??
     ((a: string[]): Promise<{ status: number | null; stderr: string }> => runSudo(a, { timeoutMs: 30_000 }));

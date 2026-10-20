@@ -3,7 +3,7 @@ import { accessSync, constants, existsSync, lstatSync, readdirSync, readFileSync
 import os from "node:os";
 import path from "node:path";
 import { pathToUri } from "./uri";
-import { isDarwin } from "./platform";
+import { isDarwin, macHelperPath } from "./platform";
 import { swallow } from "../app/log";
 
 // --- Deterministic fs+path operations: the primitives runTransfer, trash and
@@ -475,8 +475,61 @@ const trashRootsFor = (target: string, platform: string = process.platform): str
 // Then the file moves, then the placeholder is overwritten with the real
 // Path=/DeletionDate=. If the move fails the placeholder is removed (no
 // orphan entry); if the final info write fails the move rolls back.
+// macOS system trash via the native helper (FileManager.trashItem): the
+// item lands in the same trash the system chose, registered with the trash
+// service so Finder offers Put Back. tfm's bookkeeping is unchanged — the
+// sidecar is written for the RESULTING name into the layout of the trash
+// dir the system picked. Returns the final path, or null when the helper
+// is missing/failed or the sidecar couldn't be written (with the file
+// moved back) — the caller then falls back to the plain claim+move loop,
+// which is exactly the Phase 1 behavior.
+const darwinHelperTrash = async (absSrc: string, platform: string): Promise<string | null> => {
+  const helper = macHelperPath(platform);
+  if (!helper) return null;
+  let finalPath: string;
+  try {
+    // explicit env: Bun.spawn otherwise inherits the process-start env
+    // snapshot, not the live one (runGio pins env the same way)
+    const proc = Bun.spawn([helper, "trash", absSrc], { stdout: "pipe", stderr: "pipe", env: { ...process.env } });
+    const out = (await new Response(proc.stdout).text()).trim();
+    if ((await proc.exited) !== 0 || !out) return null;
+    finalPath = out.split("\n").pop() ?? "";
+    if (!finalPath || !existsSync(finalPath)) return null;
+  } catch {
+    return null;
+  }
+  const { infoDir } = trashLayoutForRoot(path.dirname(finalPath), platform);
+  const name = path.basename(finalPath);
+  const stamp = new Date().toISOString().replace(/\.\d+Z$/, "Z");
+  try {
+    await mkdir(infoDir, { recursive: true });
+    await writeFile(
+      path.join(infoDir, `${name}.trashinfo`),
+      `[Trash Info]\nPath=${encodeTrashPath(absSrc)}\nDeletionDate=${stamp}\n`,
+    );
+    try {
+      await fsyncPath(path.join(infoDir, `${name}.trashinfo`));
+    } catch (syncErr) {
+      swallow("trash info fsync (helper)", syncErr);
+    }
+  } catch (err) {
+    // a trashed file without a sidecar is unrestorable from tfm — put it
+    // back and let the plain move loop own the outcome instead
+    swallow("trash info write after helper trash", err);
+    try {
+      await fsMove(finalPath, absSrc);
+    } catch {}
+    return null;
+  }
+  return finalPath;
+};
+
 export const xdgTrashMove = async (p: string, platform: string = process.platform): Promise<string> => {
   const absSrc = path.resolve(p);
+  if (isDarwin(platform)) {
+    const viaHelper = await darwinHelperTrash(absSrc, platform);
+    if (viaHelper) return viaHelper;
+  }
   const roots = trashRootsFor(absSrc, platform);
   let lastErr: unknown = null;
   for (const root of roots) {

@@ -9,7 +9,9 @@ import {
   sudoExecError,
   sudoMvArgv,
   sudoLaunchArgv,
+  sudoMvNoClobberArgv,
   sudoOpenArgv,
+  sudoStatIdArgv,
   sudoRmArgv,
 } from "./elevate";
 import { errCode, fsErrText } from "./fsutil";
@@ -107,6 +109,17 @@ describe("sudo argv shapes", () => {
   });
   test("rm carries --", () => {
     expect(sudoRmArgv("/a/-dash")).toEqual(["sudo", "-n", "rm", "-rf", "--", "/a/-dash"]);
+  });
+});
+
+describe("sudo argv BSD pass (darwin)", () => {
+  test("stat id: GNU -c %w vs BSD -f %B", () => {
+    expect(sudoStatIdArgv("/a/f", "linux")).toEqual(["sudo", "-n", "stat", "-c", "%d:%i:%w", "--", "/a/f"]);
+    expect(sudoStatIdArgv("/a/f", "darwin")).toEqual(["sudo", "-n", "stat", "-f", "%d:%i:%B", "--", "/a/f"]);
+  });
+  test("no-clobber move: GNU -nT vs BSD -n (no -T exists)", () => {
+    expect(sudoMvNoClobberArgv("/s", "/t", "linux")).toEqual(["sudo", "-n", "mv", "-nT", "--", "/s", "/t"]);
+    expect(sudoMvNoClobberArgv("/s", "/t", "darwin")).toEqual(["sudo", "-n", "mv", "-n", "--", "/s", "/t"]);
   });
 });
 

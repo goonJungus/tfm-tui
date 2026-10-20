@@ -3,8 +3,10 @@ import {
   buildMountArgs,
   buildUnmountArgs,
   gvfsRoot,
+  darwinMountUri,
   isNetworkPath,
   parseGvfsName,
+  parseMountTable,
   parseServerInput,
   takeGioPrompt,
 } from "./network";
@@ -53,10 +55,10 @@ describe("gvfsRoot / isNetworkPath", () => {
   test("honors $XDG_RUNTIME_DIR", () => {
     process.env.XDG_RUNTIME_DIR = "/run/user/4242";
     expect(gvfsRoot()).toBe("/run/user/4242/gvfs");
-    expect(isNetworkPath("/run/user/4242/gvfs/sftp:host=a/foo")).toBe(true);
-    expect(isNetworkPath("/run/user/4242/gvfs")).toBe(true);
-    expect(isNetworkPath("/run/user/4242/gvfs-other")).toBe(false);
-    expect(isNetworkPath("/home/bob")).toBe(false);
+    expect(isNetworkPath("/run/user/4242/gvfs/sftp:host=a/foo", "linux")).toBe(true);
+    expect(isNetworkPath("/run/user/4242/gvfs", "linux")).toBe(true);
+    expect(isNetworkPath("/run/user/4242/gvfs-other", "linux")).toBe(false);
+    expect(isNetworkPath("/home/bob", "linux")).toBe(false);
   });
 });
 
@@ -114,5 +116,39 @@ describe("takeGioPrompt", () => {
     expect(takeGioPrompt("")).toBeNull();
     expect(takeGioPrompt("Mounting...\n")).toBeNull();
     expect(takeGioPrompt("User: notatail")).toBeNull();
+  });
+});
+
+const MOUNT_TABLE = [
+  "/dev/disk3s1 on / (apfs, local, journaled)",
+  "//jana@junguspc/C on /Volumes/junguspc (smbfs, nodev, nosuid, mounted by jana)",
+  "nas.local:/export/media on /Volumes/media (nfs, nodev, nosuid, mounted by jana)",
+  "/dev/disk4s1 on /Volumes/USBSTICK (exfat, local, nodev, nosuid)",
+  "//guest@files.local/My Share on /Volumes/My Share (smbfs, nodev, nosuid)",
+].join("\n");
+
+describe("darwin mount table", () => {
+  test("parseMountTable splits source / mountpoint / fstype (spaces survive)", () => {
+    const entries = parseMountTable(MOUNT_TABLE);
+    expect(entries).toHaveLength(5);
+    expect(entries[1]).toEqual({ source: "//jana@junguspc/C", mountpoint: "/Volumes/junguspc", fstype: "smbfs" });
+    expect(entries[4]!.mountpoint).toBe("/Volumes/My Share");
+  });
+
+  test("isNetworkPath on darwin keys off network fstypes only", () => {
+    expect(isNetworkPath("/Volumes/junguspc/Users/x", "darwin", MOUNT_TABLE)).toBe(true);
+    expect(isNetworkPath("/Volumes/media/film.mkv", "darwin", MOUNT_TABLE)).toBe(true);
+    expect(isNetworkPath("/Volumes/My Share/f", "darwin", MOUNT_TABLE)).toBe(true);
+    // a local USB volume under /Volumes is NOT network
+    expect(isNetworkPath("/Volumes/USBSTICK/f", "darwin", MOUNT_TABLE)).toBe(false);
+    expect(isNetworkPath("/Users/jana/f", "darwin", MOUNT_TABLE)).toBe(false);
+    // a sibling prefix is not inside the mount
+    expect(isNetworkPath("/Volumes/junguspc-other/f", "darwin", MOUNT_TABLE)).toBe(false);
+  });
+
+  test("darwinMountUri reconstructs smb/nfs URIs, gives up on opaque sources", () => {
+    expect(darwinMountUri("//jana@junguspc/C", "smbfs")).toBe("smb://jana@junguspc/C");
+    expect(darwinMountUri("nas.local:/export/media", "nfs")).toBe("nfs://nas.local/export/media");
+    expect(darwinMountUri("afp_0TV7kp0TV7kp0TV7kp0TV-1.2.3.4", "afpfs")).toBeNull();
   });
 });

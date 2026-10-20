@@ -7,7 +7,7 @@ import { isDarwin } from "./platform";
 import { fileUriToPath, pathToUri } from "./uri";
 import { trashLayout } from "./fsutil";
 import { parseServerInput } from "./network";
-import { listNetworkMounts, type NetworkMount } from "./netmount";
+import { listNetworkMounts, listNetworkMountsDarwin, type NetworkMount } from "./netmount";
 
 // --- System places sources, Nautilus-style: XDG user dirs, GTK bookmarks,
 // lsblk mounts and the sidebar section model built from them. Owns the
@@ -94,7 +94,11 @@ export const loadSystemPlaces = async (opts?: { skipMounts?: boolean; platform?:
     readUserDirs(platform),
     readBookmarks(),
     opts?.skipMounts ? Promise.resolve<MountEntry[] | null>(null) : listMounts(platform),
-    listNetworkMounts(),
+    // network mounts: gvfs dir on Linux; network-typed /Volumes mounts on
+    // macOS (the mount table is the authority there)
+    isDarwin(platform)
+      ? listNetworkMountsDarwin(async () => (await execBun("/sbin/mount", [], { timeoutMs: 5_000 })).stdout)
+      : listNetworkMounts(),
   ]);
   sysUserDirs = dirs;
   sysBookmarks = marks;

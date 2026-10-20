@@ -2,6 +2,7 @@
 // and the cached-timestamp-first auth flow. No ui/renderer/state imports —
 // callers inject prompt/notify/exec seams so tests never touch real sudo. ---
 import { errCode } from "./fsutil";
+import { isDarwin } from "./platform";
 import { errMessage } from "../lib/uiutil";
 
 export const isPrivilegeError = (err: unknown): boolean => {
@@ -22,6 +23,21 @@ export const sudoRmArgv = (target: string): string[] => ["sudo", "-n", "rm", "-r
 export const sudoCatArgv = (file: string): string[] => ["sudo", "-n", "cat", "--", file];
 export const sudoValidateArgv = (): string[] => ["sudo", "-S", "-v"];
 export const sudoCachedArgv = (): string[] => ["sudo", "-n", "true"];
+// staged-copy identity probe (dev:ino:birth). GNU stat prints the birth as
+// a date string (-c %w); BSD stat prints epoch seconds (-f %B) — same
+// field order, different dialect AND different birth encoding, so the
+// argv travels with its parser (fileops' sudoFileIdOf branches on the
+// same platform check).
+export const sudoStatIdArgv = (p: string, platform: string = process.platform): string[] =>
+  isDarwin(platform)
+    ? ["sudo", "-n", "stat", "-f", "%d:%i:%B", "--", p]
+    : ["sudo", "-n", "stat", "-c", "%d:%i:%w", "--", p];
+// no-clobber landing of the staged copy. GNU mv -nT never overwrites AND
+// never treats the target as a directory; BSD mv has -n but no -T — with
+// -n alone an existing-directory target would swallow the file, so the
+// darwin caller pre-checks `test -d <target>` (fileops' sudoCopy).
+export const sudoMvNoClobberArgv = (src: string, dest: string, platform: string = process.platform): string[] =>
+  isDarwin(platform) ? ["sudo", "-n", "mv", "-n", "--", src, dest] : ["sudo", "-n", "mv", "-nT", "--", src, dest];
 // Elevated default-open. Deliberately NO `--`: tfm only passes absolute
 // paths (leading `/`, never parsed as options), and `--` is only legal when
 // XDG_UTILS_ENABLE_DOUBLE_HYPEN=1 is visible — which sudo's env_reset strips,

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { listNetworkMounts, makeNetworkActions, type GioResult, type NetworkSink } from "./netmount";
+import { listNetworkMounts, listNetworkMountsDarwin, makeNetworkActions, makeNetworkActionsDarwin, type DarwinNetworkSink, type GioResult, type NetworkSink } from "./netmount";
 
 const oldRuntime = process.env.XDG_RUNTIME_DIR;
 beforeEach(() => {
@@ -115,5 +115,64 @@ describe("makeNetworkActions.disconnect", () => {
     expect(await actions.disconnect(p)).toBe(false);
     expect(actions.uriForPath(p)).toBe("sftp://bob@example.com/");
     expect(calls.notify.at(-1)).toEqual(["Disconnect failed · Error: busy", "network", "error"]);
+  });
+});
+
+describe("darwin network actions", () => {
+  const TABLE_AFTER = [
+    "/dev/disk3s1 on / (apfs, local, journaled)",
+    "//jana@junguspc/C on /Volumes/junguspc (smbfs, nodev, nosuid, mounted by jana)",
+  ].join("\n");
+  const makeDarwinSink = (opts: { mountResult?: GioResult; tables: string[] }) => {
+    const calls: { mount: string[]; unmount: string[]; notify: [string, string?, string?][] } = {
+      mount: [],
+      unmount: [],
+      notify: [],
+    };
+    let reads = 0;
+    const sink: DarwinNetworkSink = {
+      mount: async (uri) => {
+        calls.mount.push(uri);
+        return opts.mountResult ?? { code: 0, stdout: "", stderr: "" };
+      },
+      unmount: async (p) => {
+        calls.unmount.push(p);
+        return { code: 0, stdout: "", stderr: "" };
+      },
+      readMounts: async () => opts.tables[Math.min(reads++, opts.tables.length - 1)] ?? "",
+      notify: (m, t, l) => calls.notify.push([m, t, l]),
+    };
+    return { sink, calls };
+  };
+
+  test("listNetworkMountsDarwin enumerates network /Volumes mounts only", async () => {
+    const mounts = await listNetworkMountsDarwin(async () => TABLE_AFTER + "\n/dev/disk4s1 on /Volumes/USB (exfat, local)");
+    expect(mounts).toEqual([
+      { path: "/Volumes/junguspc", uri: "smb://jana@junguspc/C", label: "junguspc", scheme: "smb" },
+    ]);
+  });
+
+  test("connect mounts through the sink and resolves the fresh mountpoint", async () => {
+    const { sink, calls } = makeDarwinSink({ tables: ["", TABLE_AFTER] });
+    const actions = makeNetworkActionsDarwin(sink);
+    const p = await actions.connect("smb://jana@junguspc/C");
+    expect(calls.mount).toEqual(["smb://jana@junguspc/C"]);
+    expect(p).toBe("/Volumes/junguspc");
+    expect(actions.uriForPath("/Volumes/junguspc")).toBe("smb://jana@junguspc/C");
+  });
+
+  test("connect refuses schemes Finder can't mount", async () => {
+    const { sink, calls } = makeDarwinSink({ tables: [""] });
+    const actions = makeNetworkActionsDarwin(sink);
+    expect(await actions.connect("sftp://bob@example.com/srv")).toBeNull();
+    expect(calls.mount).toEqual([]);
+    expect(calls.notify[0]?.[0]).toContain("sftp");
+  });
+
+  test("disconnect umounts by path", async () => {
+    const { sink, calls } = makeDarwinSink({ tables: [TABLE_AFTER] });
+    const actions = makeNetworkActionsDarwin(sink);
+    expect(await actions.disconnect("/Volumes/junguspc")).toBe(true);
+    expect(calls.unmount).toEqual(["/Volumes/junguspc"]);
   });
 });

@@ -38,9 +38,12 @@ import {
   runSudoTool,
   sudoCpArgv,
   sudoMvArgv,
+  sudoMvNoClobberArgv,
   sudoRmArgv,
+  sudoStatIdArgv,
   type SudoExecFn,
 } from "./elevate";
+import { isDarwin } from "./platform";
 import { copyTreeProgress, scanTree, type TransferSink } from "./transfer";
 import {
   commonParent,
@@ -363,8 +366,15 @@ export const makeFileOps = (ctx: FileOpsCtx) => {
   // same end-state as the normal path via cp -a / mv so undo units below can
   // be reused untouched. Throws the tool's first stderr line on failure.
   const sudoFileIdOf = async (p: string): Promise<FileId | null> => {
-    const r = await sudoExec(["sudo", "-n", "stat", "-c", "%d:%i:%w", "--", p]);
+    const r = await sudoExec(sudoStatIdArgv(p, ctx.platform));
     if (r.status !== 0) return null;
+    if (isDarwin(ctx.platform)) {
+      // BSD: three integers, birth as whole epoch seconds (no sub-second
+      // precision — the id stays conservative for undo guards)
+      const m = /^(\d+):(\d+):(\d+)$/.exec(r.stdout?.trim() ?? "");
+      if (!m) return null;
+      return { dev: Number(m[1]), ino: Number(m[2]), born: Number(m[3]) * 1000 };
+    }
     const match = /^(\d+):(\d+):(.+)$/.exec(r.stdout?.trim() ?? "");
     if (!match) return null;
     const when = match[3] ?? "";
@@ -385,7 +395,13 @@ export const makeFileOps = (ctx: FileOpsCtx) => {
       const staged = path.join(stage, path.basename(src));
       const id = fileIdOf(staged) ?? (await sudoFileIdOf(staged));
       if (!id) throw new Error("cannot identify staged copy");
-      await runSudoTool(sudoExec, ["sudo", "-n", "mv", "-nT", "--", staged, target]);
+      if (isDarwin(ctx.platform)) {
+        // BSD mv lacks -T: an existing-directory target would swallow the
+        // staged file under -n alone — refuse it like GNU -nT does
+        const dirThere = await sudoExec(["sudo", "-n", "test", "-d", target]);
+        if (dirThere.status === 0) throw new Error(`already exists: ${path.basename(target)}`);
+      }
+      await runSudoTool(sudoExec, sudoMvNoClobberArgv(staged, target, ctx.platform));
       const remains = await sudoExec(["sudo", "-n", "test", "-e", staged]);
       if (remains.status === 0) throw new Error(`already exists: ${path.basename(target)}`);
       if (remains.status !== 1 || remains.stderr.trim())

@@ -1,7 +1,7 @@
 import path from "node:path";
 import { readdir } from "node:fs/promises";
 import { errMessage } from "../lib/uiutil";
-import { gvfsRoot, parseGvfsName, parseServerInput } from "./network";
+import { darwinMountUri, gvfsRoot, NETWORK_FSTYPES, parseGvfsName, parseMountTable, parseServerInput } from "./network";
 import type { NotifyLevel } from "../lib/notify-level";
 
 // --- Network location orchestration: connect/disconnect through `gio mount`
@@ -60,6 +60,119 @@ const nameMatchesUri = (name: string, uri: string): boolean => {
   } catch {
     return false;
   }
+};
+
+// --- macOS: mounts live under /Volumes and the mount table is the source
+// of truth (no gvfs root to readdir). The sink's mount goes through Finder
+// (its credential UI, not tfm's), unmount is `umount` on the path. ---
+
+export type DarwinNetworkSink = {
+  mount(uri: string): Promise<GioResult>;
+  unmount(mountPath: string): Promise<GioResult>;
+  readMounts(): Promise<string>;
+  notify(msg: string, title?: string, level?: NotifyLevel): void;
+  log?(msg: string): void;
+};
+
+// schemes Finder can mount. sftp/ftp/mtp/gphoto2 have no stock macOS
+// mounter — refused honestly at connect time instead of failing in Finder.
+export const DARWIN_CONNECT_SCHEMES: ReadonlySet<string> = new Set(["smb", "afp", "nfs", "dav", "davs"]);
+
+const darwinNetworkEntries = async (sink: DarwinNetworkSink): Promise<NetworkMount[]> => {
+  try {
+    return parseMountTable(await sink.readMounts())
+      .filter((e) => NETWORK_FSTYPES.has(e.fstype) && e.mountpoint.startsWith("/Volumes/"))
+      .map((e) => ({
+        path: e.mountpoint,
+        uri: darwinMountUri(e.source, e.fstype) ?? "",
+        label: path.basename(e.mountpoint),
+        scheme: e.fstype === "smbfs" ? "smb" : e.fstype === "afpfs" ? "afp" : e.fstype,
+      }));
+  } catch {
+    return [];
+  }
+};
+
+// sidebar enumeration (places calls this on darwin)
+export const listNetworkMountsDarwin = (readMounts: () => Promise<string>): Promise<NetworkMount[]> =>
+  darwinNetworkEntries({ readMounts } as DarwinNetworkSink);
+
+export const makeNetworkActionsDarwin = (sink: DarwinNetworkSink) => {
+  const uriByPath = new Map<string, string>();
+
+  const connect = async (raw: string): Promise<string | null> => {
+    const parsed = parseServerInput(raw);
+    if (!parsed) {
+      sink.notify("Unsupported server address", "network", "error");
+      return null;
+    }
+    const scheme = parsed.uri.split(":")[0]?.toLowerCase() ?? "";
+    if (!DARWIN_CONNECT_SCHEMES.has(scheme)) {
+      sink.notify(`Can't connect to ${scheme}:// on macOS`, "network", "error");
+      return null;
+    }
+    const before = new Set((await darwinNetworkEntries(sink)).map((m) => m.path));
+    let res: GioResult;
+    try {
+      res = await sink.mount(parsed.uri);
+    } catch (err) {
+      sink.notify(`Connect failed · ${errMessage(err)}`, "network", "error");
+      return null;
+    }
+    if (res.code !== 0) {
+      const why = lastLine(res.stderr) || lastLine(res.stdout) || "unknown error";
+      sink.notify(`Connect failed · ${why}`, "network", "error");
+      sink.log?.(`finder mount ${parsed.uri} exit ${res.code}: ${why}`);
+      return null;
+    }
+    // Finder returns once the mount exists, but the mount table can lag a
+    // beat — poll like the gvfs resolver does
+    let host = "";
+    try {
+      host = new URL(parsed.uri).hostname.toLowerCase();
+    } catch {}
+    for (let attempt = 0; attempt < 4; attempt++) {
+      if (attempt > 0) await new Promise((r) => setTimeout(r, 250));
+      const entries = await darwinNetworkEntries(sink);
+      const fresh = entries.filter((m) => !before.has(m.path));
+      const picked = fresh.find((m) => m.uri.toLowerCase().includes(host)) ?? fresh[0];
+      if (picked) {
+        uriByPath.set(picked.path, parsed.uri);
+        sink.notify(`Connected to ${parsed.label}`, "network", "success");
+        return picked.path;
+      }
+    }
+    sink.notify(`Connected to ${parsed.label} · no mount path`, "network", "error");
+    return null;
+  };
+
+  const disconnect = async (mountPath: string): Promise<boolean> => {
+    let res: GioResult;
+    try {
+      res = await sink.unmount(mountPath);
+    } catch (err) {
+      sink.notify(`Disconnect failed · ${errMessage(err)}`, "network", "error");
+      return false;
+    }
+    if (res.code !== 0) {
+      const why = lastLine(res.stderr) || lastLine(res.stdout) || "unknown error";
+      sink.notify(`Disconnect failed · ${why}`, "network", "error");
+      sink.log?.(`umount ${mountPath} exit ${res.code}: ${why}`);
+      return false;
+    }
+    uriByPath.delete(mountPath);
+    sink.notify(`Disconnected ${path.basename(mountPath)}`, "network", "success");
+    return true;
+  };
+
+  return {
+    connect,
+    disconnect,
+    rememberUri: (mountPath: string, uri: string): void => {
+      uriByPath.set(mountPath, uri);
+    },
+    uriForPath: (mountPath: string): string | undefined => uriByPath.get(mountPath),
+  };
 };
 
 export const makeNetworkActions = (sink: NetworkSink) => {

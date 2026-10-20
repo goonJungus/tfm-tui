@@ -742,6 +742,10 @@ describe("non-rejecting op contract", () => {
 describe("darwin trash round trip", () => {
   test("trash lands in $HOME/.Trash with a tfm-private sidecar; restore returns it", async () => {
     const root = sandbox();
+    // the plain claim+move path is under test here — keep a real helper
+    // binary (built into bin/ on the Mac) from hijacking the move
+    const oldHelper = process.env.TFM_MAC_HELPER;
+    process.env.TFM_MAC_HELPER = "/nonexistent/tfm-mac-helper";
     try {
       const sink = recordingSink();
       const ops = makeTrashOps({ ...sink, platform: "darwin" });
@@ -762,6 +766,8 @@ describe("darwin trash round trip", () => {
         existsSync(path.join(root, "data", "tfm", "trash-info", "home", "gone.txt.trashinfo")),
       ).toBe(false);
     } finally {
+      if (oldHelper === undefined) delete process.env.TFM_MAC_HELPER;
+      else process.env.TFM_MAC_HELPER = oldHelper;
       rmSync(root, { recursive: true, force: true });
     }
   });

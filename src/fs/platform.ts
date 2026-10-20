@@ -3,8 +3,24 @@
 // the per-domain tool tables in clipboard/places/elevate), so call sites stay
 // platform-free. Functions take `platform` as an injectable parameter
 // (defaulting to process.platform) so tests can pin either side. ---
+import { existsSync } from "node:fs";
+import path from "node:path";
 
 export const isDarwin = (platform: string = process.platform): boolean => platform === "darwin";
+
+// the native helper's location (LaunchServices handler enumeration +
+// FileManager trash; source in native/macos/, built by its build.sh). The
+// TFM_MAC_HELPER env override wins (tests, relocated installs); otherwise
+// the in-tree build product two levels up from src/fs. Null when absent —
+// the darwin features that need it degrade instead of breaking (the Open
+// With picker empties; trash falls back to the plain rename move).
+export const macHelperPath = (platform: string = process.platform): string | null => {
+  if (!isDarwin(platform)) return null;
+  const env = process.env.TFM_MAC_HELPER;
+  if (env) return env;
+  const p = path.join(import.meta.dir, "..", "..", "bin", "tfm-mac-helper");
+  return existsSync(p) ? p : null;
+};
 
 // default-application opener: `open` on macOS, `xdg-open` on Linux — same
 // fire-and-forget, detached semantics and argv shape ([target]) on both.
