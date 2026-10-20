@@ -194,6 +194,7 @@ beforeAll(async () => {
   // literal per call lets a test dial the scroll offset in
   scroller = { content, scrollTop: 0 };
   const { renderGrid: rg, syncWindow: sw } = makeGridRenderer({
+    platform: "linux",
     termW: () => TERM_W,
     termH: () => TERM_H,
     scroller: () => scroller,
@@ -549,6 +550,7 @@ describe("renderGrid (grid tiles)", () => {
       renderPreview: () => {},
     });
     const { renderGrid: bootRender } = makeGridRenderer({
+      platform: "linux",
       termW: () => TERM_W,
       termH: () => TERM_H,
       // the boot path only needs a content host; the VNode stands in for it

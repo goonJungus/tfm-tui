@@ -3,14 +3,15 @@ import { readdir, readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import {
   allTrashFilesDirs,
+  allTrashLayouts,
   failSuffix,
   countTrashItems,
   fileIdOf,
   fsErrText,
   rmTrashInfoForPath,
-  trashDir,
   trashIfSameFile,
   trashInfoPathForTrashFile,
+  trashLayout,
   xdgTrashMove,
   safeRestoreMove,
 } from "./fsutil";
@@ -73,29 +74,36 @@ export type TrashOpsSink = {
   // undo closures have no privilege — the restore would fail with no undo).
   ensureSudo?: (opLabel: string) => Promise<boolean>;
   sudoExec?: (argv: string[]) => Promise<{ status: number | null; stderr: string }>;
-  // trash FILES dirs to empty (tests inject fakes; default enumerates home +
-  // every mounted $topdir/.Trash-$uid via /proc/mounts). Wiring passes nothing.
+  // trash FILES dirs to empty (tests inject fakes; default enumerates the
+  // mounted trash roots). Wiring passes nothing.
   trashFilesDirs?: () => string[];
+  // platform override for the fsutil trash layout (tests pin it; wiring
+  // leaves it — the real platform rules).
+  platform?: string;
 };
 
 // XDG trashinfo -> original absolute path. Spec says URL-encoded; nautilus
 // writes bare encoded abs paths (and sometimes file:// URIs).
-export const trashOrigPath = async (name: string): Promise<string | null> => {
+export const trashOrigPath = async (name: string, platform: string = process.platform): Promise<string | null> => {
   try {
-    const raw = await readFile(path.join(trashDir(), "info", `${name}.trashinfo`), "utf8");
+    const raw = await readFile(path.join(trashLayout(platform).infoDir, `${name}.trashinfo`), "utf8");
     return parseTrashOrig(raw);
   } catch {
     return null;
   }
 };
 
-// sibling-aware original-path lookup for per-mount trashes: <root>/files/<name>
-// resolves via <root>/info/<name>.trashinfo. No home fallback when the sibling
-// exists but is unreadable — a home entry with the same basename belongs to a
-// different file, and restoring the per-mount file to the home file's Path=
-// would misplace it. Home lookup serves bare names (backwards compat) only.
-export const trashOrigPathForFile = async (trashFilePath: string): Promise<string | null> => {
-  const sibling = trashInfoPathForTrashFile(trashFilePath);
+// sibling-aware original-path lookup for per-mount trashes: a trashed file
+// resolves via its root's info dir (see trashInfoPathForTrashFile). No home
+// fallback when the sibling exists but is unreadable — a home entry with the
+// same basename belongs to a different file, and restoring the per-mount
+// file to the home file's Path= would misplace it. Home lookup serves bare
+// names (backwards compat) only.
+export const trashOrigPathForFile = async (
+  trashFilePath: string,
+  platform: string = process.platform,
+): Promise<string | null> => {
+  const sibling = trashInfoPathForTrashFile(trashFilePath, platform);
   if (sibling) {
     try {
       return await readFile(sibling, "utf8").then(parseTrashOrig);
@@ -103,7 +111,7 @@ export const trashOrigPathForFile = async (trashFilePath: string): Promise<strin
       return null;
     }
   }
-  return trashOrigPath(path.basename(trashFilePath));
+  return trashOrigPath(path.basename(trashFilePath), platform);
 };
 
 const parseTrashOrig = (raw: string): string | null => {
@@ -118,6 +126,7 @@ const parseTrashOrig = (raw: string): string | null => {
 };
 
 export const makeTrashOps = (sink: TrashOpsSink) => {
+  const platform = sink.platform ?? process.platform;
   const queue = sharedOpQueue();
   const sudoExec = sink.sudoExec ?? defaultSudoExec;
   // one password gate per op (memoized per call below via needSudo closures)
@@ -157,18 +166,18 @@ export const makeTrashOps = (sink: TrashOpsSink) => {
         // undo unit pairs deterministically (a before/after listing diff could
         // mis-pair when something else trashes a similar name concurrently)
         try {
-          const loc = await xdgTrashMove(p);
+          const loc = await xdgTrashMove(p, platform);
           const hit = path.basename(loc);
           const from = path.join(path.dirname(loc), hit);
           units.push(async () => {
             await safeRestoreMove(from, p);
-            await rmTrashInfoForPath(from, sink.log?.bind(sink));
+            await rmTrashInfoForPath(from, sink.log?.bind(sink), platform);
           });
           dUnits.push({ op: "restore-move", from, to: p });
           dUnits.push({ op: "rm-trashinfo", name: hit, path: from });
           redos.push(async () => {
             try {
-              if (existsSync(p)) await xdgTrashMove(p);
+              if (existsSync(p)) await xdgTrashMove(p, platform);
             } catch (err) {
               sink.log?.(`redo trash ${p}: ${fsErrText(err)}`);
             }
@@ -211,7 +220,7 @@ export const makeTrashOps = (sink: TrashOpsSink) => {
       let ok = 0;
       const failWhy = new Set<string>();
       for (const src of paths) {
-        const orig = await trashOrigPathForFile(src);
+        const orig = await trashOrigPathForFile(src, platform);
         if (!orig) {
           failWhy.add("no trashinfo");
           continue;
@@ -220,7 +229,7 @@ export const makeTrashOps = (sink: TrashOpsSink) => {
           // safeRestoreMove owns the occupied-target bump (never clobbers)
           // and returns the final dest for the journal + cleanup below
           const restoredDest = await safeRestoreMove(src, orig);
-          await rmTrashInfoForPath(src, sink.log?.bind(sink));
+          await rmTrashInfoForPath(src, sink.log?.bind(sink), platform);
           // undo = send it back to trash (same-file only: a stranger
           // reoccupying the restored path is skipped, never trashed);
           // redo = restore again (trashinfo still resolves via Path= after
@@ -228,7 +237,7 @@ export const makeTrashOps = (sink: TrashOpsSink) => {
           const rid = fileIdOf(restoredDest);
           units.push(async () => {
             try {
-              await trashIfSameFile(restoredDest, rid, sink.log?.bind(sink));
+              await trashIfSameFile(restoredDest, rid, sink.log?.bind(sink), platform);
             } catch (err) {
               sink.log?.(`undo restore ${restoredDest}: ${fsErrText(err)}`);
               throw err;
@@ -237,11 +246,11 @@ export const makeTrashOps = (sink: TrashOpsSink) => {
           dUnits.push({ op: "trash", path: restoredDest, ...(rid ?? {}) });
           redos.push(async () => {
             try {
-              const loc = await xdgTrashMove(restoredDest).catch(() => null);
+              const loc = await xdgTrashMove(restoredDest, platform).catch(() => null);
               if (loc) {
-                const back = await trashOrigPathForFile(loc);
+                const back = await trashOrigPathForFile(loc, platform);
                 await safeRestoreMove(loc, back ?? restoredDest);
-                await rmTrashInfoForPath(loc, sink.log?.bind(sink));
+                await rmTrashInfoForPath(loc, sink.log?.bind(sink), platform);
               }
             } catch (err) {
               sink.log?.(`redo restore ${restoredDest}: ${fsErrText(err)}`);
@@ -311,7 +320,7 @@ export const makeTrashOps = (sink: TrashOpsSink) => {
         try {
           if (dp) await rmTreeProgress(p, dp.sink);
           else await rm(p, { recursive: true });
-          await rmTrashInfoForPath(p, sink.log?.bind(sink));
+          await rmTrashInfoForPath(p, sink.log?.bind(sink), platform);
           ok++;
         } catch (err) {
           // cancel raced the last file: the checkpoint threw, not the fs
@@ -333,7 +342,7 @@ export const makeTrashOps = (sink: TrashOpsSink) => {
             if (sudoOk) {
               try {
                 await sudoRm(p);
-                await rmTrashInfoForPath(p, sink.log?.bind(sink));
+                await rmTrashInfoForPath(p, sink.log?.bind(sink), platform);
                 ok++;
                 continue;
               } catch (sudoErr) {
@@ -377,7 +386,7 @@ export const makeTrashOps = (sink: TrashOpsSink) => {
   const emptyTrash = (): Promise<void> => {
     if (vetoedByPlugin("empty", [])) return Promise.resolve();
     const run = queue.enqueue(async () => {
-      const homeFiles = path.join(trashDir(), "files");
+      const homeFiles = trashLayout(platform).filesDir;
       let names: string[];
       try {
         names = await readdir(homeFiles);
@@ -393,7 +402,7 @@ export const makeTrashOps = (sink: TrashOpsSink) => {
       // other UI path to empty them — include every mounted one. Extra roots
       // read best-effort (a device yanked mid-empty just yields per-item
       // failures below); home stays the source of truth above.
-      const dirs = sink.trashFilesDirs ? sink.trashFilesDirs() : allTrashFilesDirs();
+      const dirs = sink.trashFilesDirs ? sink.trashFilesDirs() : allTrashFilesDirs(undefined, platform);
       for (const dir of new Set(
         dirs.map((d) => {
           try {
@@ -431,6 +440,28 @@ export const makeTrashOps = (sink: TrashOpsSink) => {
         sink.notify(`Emptied ${n} of ${total} · ${failSuffix(failed, failWhy)}`, "empty failed", "error");
         return;
       }
+      // fully emptied: per-item cleanup removed the sidecars of everything
+      // tfm deleted, but sidecars orphaned by OTHER trashers emptying the
+      // shared trash (Finder on macOS, gio on Linux) would linger and force
+      // phantom name bumps on future trashes — sweep the info dirs of the
+      // roots just emptied. Best-effort: a stale sidecar is cosmetic.
+      const emptied = new Set<string>();
+      try {
+        emptied.add(path.resolve(homeFiles));
+      } catch {}
+      for (const d of dirs) {
+        try {
+          emptied.add(path.resolve(d));
+        } catch {}
+      }
+      for (const layout of allTrashLayouts(undefined, platform)) {
+        try {
+          if (!emptied.has(path.resolve(layout.filesDir))) continue;
+          for (const k of await readdir(layout.infoDir)) {
+            if (k.endsWith(".trashinfo")) await rm(path.join(layout.infoDir, k), { force: true });
+          }
+        } catch {}
+      }
       dp?.finish(`✓ Emptied ${n}`);
       // irreversible by design — no undo batch; say so explicitly.
       const summary = `Emptied ${n} item${n === 1 ? "" : "s"} · cannot be undone`;
@@ -451,13 +482,15 @@ type TrashConfirmsCtx = {
   confirm(message: string, yesLabel: string, onYes: () => void, danger?: boolean): void;
   emptyTrash(): void;
   deleteForever(paths: string[]): void;
+  // platform override for the count's trash layout (tests pin it)
+  platform?: string;
 };
 
 export const makeTrashConfirms = (ctx: TrashConfirmsCtx) => {
   const confirmEmptyTrash = (): void => {
     // count is best-effort (home trash only; -1 when unreadable) — the prompt
     // names the count when known so "empty everything" isn't a blind click
-    const n = countTrashItems();
+    const n = countTrashItems(undefined, ctx.platform);
     const what = n >= 0 ? `Empty Trash (${n} item${n === 1 ? "" : "s"})?` : "Empty Trash?";
     ctx.confirm(`${what} This cannot be undone.`, "Empty Trash", () => ctx.emptyTrash(), true);
   };

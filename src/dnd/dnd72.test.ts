@@ -18,7 +18,7 @@ import { gridDrag } from "../input/grid-input";
 import { startDropFrame, uriListPayload } from "./osc72";
 import { trashDir } from "../fs/fsutil";
 
-// trash-place routing compares against trashDir() (XDG-aware), so sandbox
+// trash-place routing compares against trashDir("linux") (XDG-aware), so sandbox
 // XDG_DATA_HOME like the trashops tests do — a hardcoded ~/.local/share
 // path diverges under relocation, which is exactly the bug being pinned
 const oldDataHome = process.env.XDG_DATA_HOME;
@@ -47,6 +47,7 @@ const baseCtx = () => {
     moveIns: any[];
     trashed: string[][];
   } = {
+    platform: "linux",
     tx,
     logs,
     status,
@@ -294,7 +295,7 @@ describe("self drop", () => {
 
   test("drop onto the trash place trashes instead of moving", async () => {
     const { ctx, feed } = baseCtx();
-    ctx.hitTargetAt = () => ({ kind: "place", path: path.join(trashDir(), "files") });
+    ctx.hitTargetAt = () => ({ kind: "place", path: path.join(trashDir("linux"), "files") });
     makeDnd72(ctx);
     gridDrag.keys = [{ path: "/d/a", isDir: false }];
     feed("t=o:x=1:y=1");

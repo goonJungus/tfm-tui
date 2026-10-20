@@ -52,7 +52,7 @@ export const SPIN_FRAMES_ASCII = ["|", "/", "-", "\\"];
 
 // the placeholder's caption: WHICH folder is being opened (or that a recursive
 // search is walking, which has no listing to show until it finishes)
-export const loadingLabel = (cwd: string, q: string, recursive: boolean): string => {
+export const loadingLabel = (cwd: string, q: string, recursive: boolean, platform: string = process.platform): string => {
   if (q.length > 0 && recursive) return "searching…";
   const archive = parseArchiveUri(cwd);
   const name =
@@ -60,7 +60,7 @@ export const loadingLabel = (cwd: string, q: string, recursive: boolean): string
       ? "recent files"
       : cwd === STARRED_URI
         ? "starred"
-        : isTrashFilesDir(cwd)
+        : isTrashFilesDir(cwd, platform)
           ? "trash"
           : archive
             ? path.basename(archive.file)
@@ -315,7 +315,7 @@ export const makeGridRenderer = (ctx: GridRendererCtx) => {
   const armLoading = (gen: number, cwd: string, q: string, recursive: boolean): void => {
     const delay = ctx.loadingDelayMs?.();
     if (delay === undefined || !Number.isFinite(delay) || delay > 60_000) return;
-    const msg = loadingLabel(cwd, q, recursive);
+    const msg = loadingLabel(cwd, q, recursive, ctx.platform);
     if (delay <= 0) {
       paintLoading(gen, msg);
       return;
@@ -352,7 +352,7 @@ export const makeGridRenderer = (ctx: GridRendererCtx) => {
         ? "clock"
         : cwd === STARRED_URI
           ? "star"
-          : isTrashFilesDir(cwd)
+          : isTrashFilesDir(cwd, ctx.platform)
             ? "trash-can"
             : "folder";
 

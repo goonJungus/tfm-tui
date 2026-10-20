@@ -5,7 +5,7 @@ import path from "node:path";
 import { execBun, type ExecBunResult } from "./exec-bun";
 import { isDarwin } from "./platform";
 import { fileUriToPath, pathToUri } from "./uri";
-import { trashDir } from "./fsutil";
+import { trashLayout } from "./fsutil";
 import { parseServerInput } from "./network";
 import { listNetworkMounts, type NetworkMount } from "./netmount";
 
@@ -446,7 +446,7 @@ export type SidebarVisibility = {
 export function buildSections(vis: SidebarVisibility = {}): SidebarSection[] {
   const { showRecent = true, showStarred = true, showTrash = true } = vis;
   const { showUserDirs = true, showBookmarks = true, showDevices = true, showNetwork = true } = vis;
-  const trashFilesDir = path.join(trashDir(), "files");
+  const trashFilesDir = trashLayout().filesDir;
   const hasTrash = (() => {
     try {
       return statSync(trashFilesDir).isDirectory();

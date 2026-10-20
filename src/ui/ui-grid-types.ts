@@ -26,6 +26,8 @@ export type GridState = {
 };
 
 export type GridRendererCtx = {
+  // platform override for the trash-dir classification (tests pin it)
+  platform?: string;
   termW(): number;
   termH(): number;
   scroller(): ScrollerLike | null;

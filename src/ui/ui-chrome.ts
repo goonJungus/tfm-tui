@@ -5,7 +5,7 @@ import path from "node:path";
 import { destroyChildren } from "../lib/uiutil";
 import { applySurface, btnSurface, rowSurface, slotBg, tileSurface, type UiStyle } from "./style";
 import { buildSections, loadSystemPlaces, type EjectSpec, type Place, type SidebarVisibility } from "../fs/places";
-import { trashDir } from "../fs/fsutil";
+import { trashLayout } from "../fs/fsutil";
 import { RECENT_URI, STARRED_URI } from "../fs/uri";
 import { tabTitle, type Tab } from "../app/tabs";
 import { gridDrag, type ClipItem } from "../input/grid-input";
@@ -383,10 +383,11 @@ export const makeChrome = (ctx: ChromeCtx) => {
           if (!keys || !target || place.scheme) return;
           const rest = keys.filter((k) => k.path !== target);
           if (!rest.length) return;
-          // trashDir() honors $XDG_DATA_HOME (like places.ts's Trash row) — a
-          // hardcoded ~/.local/share path diverges under a relocated trash
-          // root and the drop would plain-move without a .trashinfo
-          if (target === path.join(trashDir(), "files")) {
+          // the trash FILES dir via the platform layout (like places.ts's
+          // Trash row) — a hardcoded path diverges under a relocated trash
+          // root (or on macOS, where the files dir is ~/.Trash itself) and
+          // the drop would plain-move without a .trashinfo
+          if (target === trashLayout().filesDir) {
             // dropping onto the trash place must go through trashPaths (own
             // .trashinfo writer), not plain-move — otherwise no .trashinfo is
             // written and items can't be restored

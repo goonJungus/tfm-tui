@@ -46,7 +46,7 @@ import {
 } from "./osc72";
 import { fileUriToPath } from "../fs/uri";
 import { gridDrag, TileVisual, type ClipItem, type GridTileRef, type TileVisualMode } from "../input/grid-input";
-import { splitStemExt, trashDir } from "../fs/fsutil";
+import { splitStemExt, trashLayout } from "../fs/fsutil";
 import type { NotifyLevel } from "../lib/notify-level";
 
 // terminal-provided error text can be long or binary — keep one short line
@@ -67,6 +67,8 @@ export const splitOsc72Seq = (seq: string): { meta: string; payload: string } | 
 export type DropTarget = { kind: "folder" | "place" | "terminal"; path: string };
 
 export type Dnd72Ctx = {
+  // platform override for the trash-files comparison (tests pin it)
+  platform?: string;
   log(msg: string): void;
   // emit a wire frame (stdout in the app; captured in tests)
   writeFrame(s: string): void;
@@ -283,7 +285,7 @@ export const makeDnd72 = (ctx: Dnd72Ctx) => {
     // same routing as tile/place drops: conflict prompt, undo units, honest counts —
     // never silently skip collisions; the trash place must go through
     // trashPaths (own .trashinfo writer), not raw-move
-    if (destDir === path.join(trashDir(), "files")) {
+    if (destDir === trashLayout(ctx.platform).filesDir) {
       void ctx.trashPaths(paths);
       return;
     }

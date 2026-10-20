@@ -29,7 +29,7 @@ const fakePlugin = (over: Partial<LoadedPlugin> & { name: string }): LoadedPlugi
   ...over,
 });
 
-const TRASH_FILES = path.join(trashDir(), "files");
+const TRASH_FILES = path.join(trashDir("linux"), "files");
 
 const baseCtx = (): MenuEntriesCtx & {
   calls: string[];
@@ -41,6 +41,7 @@ const baseCtx = (): MenuEntriesCtx & {
   const sort = { sortBy: "name" as SortMode, sortAsc: true };
   const tileRefs = new Map<string, GridTileRef>([["/a", { selected: false, isDir: false }]]);
   return {
+    platform: "linux",
     calls,
     clip,
     sort,

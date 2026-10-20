@@ -66,6 +66,9 @@ import type { UndoJournalData, UndoStep, UndoUnit } from "../app/undo";
 import type { ClipItem } from "../input/grid-input";
 
 export type FileOpsCtx = {
+  // platform override for the fsutil trash layout (tests pin it; wiring
+  // leaves it — the real platform rules).
+  platform?: string;
   conflict: {
     resetPolicy(): void;
     policy(): ConflictChoice | null;
@@ -314,10 +317,10 @@ export const makeFileOps = (ctx: FileOpsCtx) => {
     (async (victimDest, units, dUnits, onStashFailed) => {
       try {
         if (!existsSync(victimDest)) return false;
-        const trashLoc = await xdgTrashMove(victimDest);
+        const trashLoc = await xdgTrashMove(victimDest, ctx.platform);
         units.push(async () => {
           await safeRestoreMove(trashLoc, victimDest);
-          await rmTrashInfoForPath(trashLoc, ctx.log);
+          await rmTrashInfoForPath(trashLoc, ctx.log, ctx.platform);
         });
         dUnits.push({ op: "restore-move", from: trashLoc, to: victimDest });
         dUnits.push({ op: "rm-trashinfo", name: path.basename(trashLoc), path: trashLoc });
@@ -415,7 +418,7 @@ export const makeFileOps = (ctx: FileOpsCtx) => {
   // stays best-effort unprivileged (the persisted steps carry no privilege).
   const sudoStashVictim = async (victimDest: string, units: UndoUnit[], dUnits: UndoStep[]): Promise<boolean> => {
     try {
-      const trashLoc = await xdgTrashMoveToRoot(victimDest, trashDir(), sudoMove);
+      const trashLoc = await xdgTrashMoveToRoot(victimDest, trashDir(ctx.platform), sudoMove, ctx.platform);
       const tid = fileIdOf(trashLoc);
       units.push(async () => {
         if (!existsSync(trashLoc)) return;
@@ -434,8 +437,8 @@ export const makeFileOps = (ctx: FileOpsCtx) => {
           if (!isPrivilegeError(err) || !(await gate())) throw err;
           await sudoMove(trashLoc, victimDest);
         }
-        await rmTrashInfoForPath(trashLoc, ctx.log);
-        const infoPath = trashInfoPathForTrashFile(trashLoc);
+        await rmTrashInfoForPath(trashLoc, ctx.log, ctx.platform);
+        const infoPath = trashInfoPathForTrashFile(trashLoc, ctx.platform);
         // cosmetic cleanup only: never prompt for a password just for a
         // sidecar — escalate only when the gate already passed above
         if (infoPath && existsSync(infoPath) && gated === true) {
@@ -1116,7 +1119,7 @@ export const makeFileOps = (ctx: FileOpsCtx) => {
   };
 
   const pasteSmart = (dest: string): void => {
-    if (isInTrashFiles(dest)) {
+    if (isInTrashFiles(dest, ctx.platform)) {
       ctx.notify("Can't paste into Trash", "paste", "error");
       return;
     }
@@ -1145,7 +1148,7 @@ export const makeFileOps = (ctx: FileOpsCtx) => {
   const moveInto = async (destDir: string, items: ClipItem[]): Promise<void> => {
     // trashing goes through trashPaths (trashinfo metadata) — a raw move
     // into Trash/files orphans the .trashinfo OriginalPath chain
-    if (isInTrashFiles(destDir)) {
+    if (isInTrashFiles(destDir, ctx.platform)) {
       ctx.notify("Can't move into Trash", "move", "error");
       return;
     }
@@ -1326,7 +1329,7 @@ export const makeFileOps = (ctx: FileOpsCtx) => {
         for (const name of afterDest) {
           if (name === stageBase || beforeDest.has(name)) continue;
           try {
-            await xdgTrashMove(path.join(destDir, name));
+            await xdgTrashMove(path.join(destDir, name), ctx.platform);
             escaped++;
           } catch (err) {
             ctx.log(`escape cleanup failed ${name}: ${fsErrText(err)}`);
@@ -1338,7 +1341,7 @@ export const makeFileOps = (ctx: FileOpsCtx) => {
           for (const name of afterParent) {
             if (name === destBase || beforeParent.has(name)) continue;
             try {
-              await xdgTrashMove(path.join(parentDir, name));
+              await xdgTrashMove(path.join(parentDir, name), ctx.platform);
               escaped++;
             } catch (err) {
               ctx.log(`escape cleanup failed ${name}: ${fsErrText(err)}`);

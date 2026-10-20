@@ -3,7 +3,7 @@
 // grid-input.ts). The floating menu widget itself lives in ./ui-menu. ---
 
 import path from "node:path";
-import { trashDir } from "../fs/fsutil";
+import { trashLayout } from "../fs/fsutil";
 import { setBookmarked, loadSystemPlaces, type EjectSpec, type Place } from "../fs/places";
 import { RECENT_URI, STARRED_URI, isArchiveUri, isVirtualUri } from "../fs/uri";
 import { archiveBrowseUri } from "../fs/archive-scheme";
@@ -15,6 +15,8 @@ import { invokeIsolated } from "../lib/uiutil";
 import type { SortMode } from "../lib/sort";
 
 export type MenuEntriesCtx = {
+  // platform override for the trash-files comparison (tests pin it)
+  platform?: string;
   closeFileMenu(): void;
   navigate(dir: string): void;
   newTab(dir: string): void;
@@ -78,7 +80,7 @@ export const pasteLabel = (n: number, into = ""): string =>
   n > 0 ? `Paste ${n} item${n === 1 ? "" : "s"}${into}` : `Paste${into}`;
 
 export const makeMenuEntries = (ctx: MenuEntriesCtx) => {
-  const trashFiles = (): string => path.join(trashDir(), "files");
+  const trashFiles = (): string => trashLayout(ctx.platform).filesDir;
 
   // plugin menu sections: one entry list per installed plugin. A throwing
   // builder or a malformed entry drops that plugin's section — never the menu

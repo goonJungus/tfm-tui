@@ -3,29 +3,60 @@ import { accessSync, constants, existsSync, lstatSync, readdirSync, readFileSync
 import os from "node:os";
 import path from "node:path";
 import { pathToUri } from "./uri";
+import { isDarwin } from "./platform";
 import { swallow } from "../app/log";
 
 // --- Deterministic fs+path operations: the primitives runTransfer, trash and
 // undo sit on. No prompts, no UI, no state — callers own decisions; these own
 // correctness (never overwrite silently, EXDEV fallback, XDG trash spec). ---
 
-// XDG trash root (spec: $XDG_DATA_HOME/Trash, default ~/.local/share/Trash —
-// which is where the monolith hardcoded it). Resolved per call, not at import,
-// so env redirection works.
-export const trashDir = (): string =>
-  path.join(process.env.XDG_DATA_HOME ?? path.join(os.homedir(), ".local/share"), "Trash");
+// Trash roots. Linux (XDG spec): $XDG_DATA_HOME/Trash, default
+// ~/.local/share/Trash — a parent dir holding files/ + info/ (see
+// TrashLayout). macOS: the root IS the system trash folder — ~/.Trash for
+// the boot volume, /Volumes/<vol>/.Trashes/<uid> per external volume — and
+// the files live directly in it (that's what makes them appear in Finder's
+// Trash). Resolved per call, not at import, so env redirection works. The
+// `platform` param (default: the real platform) lets tests pin a layout.
+// $HOME first, os.homedir() as the fallback — libuv/Node semantics. Bun
+// caches os.homedir() at process start, which would make the env-based
+// test sandboxing (used for XDG_DATA_HOME below) silently miss the trash.
+const homeDir = (): string => process.env.HOME ?? os.homedir();
+
+export const trashDir = (platform: string = process.platform): string =>
+  isDarwin(platform)
+    ? path.join(homeDir(), ".Trash")
+    : path.join(process.env.XDG_DATA_HOME ?? path.join(homeDir(), ".local/share"), "Trash");
+
+// A trash root's two halves. Linux: <root>/files + <root>/info. macOS: the
+// files dir is the root itself; the .trashinfo sidecars live in tfm's
+// private data dir instead — a sidecar sitting in ~/.Trash would show up in
+// Finder as a junk file, and Finder's own restore metadata is private
+// anyway (tfm's sidecars are what tfm's Restore reads, on both platforms).
+export type TrashLayout = { filesDir: string; infoDir: string };
+
+const tfmTrashInfoBase = (): string =>
+  path.join(process.env.XDG_DATA_HOME ?? path.join(homeDir(), ".local/share"), "tfm", "trash-info");
+
+export const trashLayoutForRoot = (root: string, platform: string = process.platform): TrashLayout => {
+  if (!isDarwin(platform)) return { filesDir: path.join(root, "files"), infoDir: path.join(root, "info") };
+  const vol = root.match(/^\/Volumes\/([^/]+)\/\.Trashes\/\d+$/);
+  return { filesDir: root, infoDir: path.join(tfmTrashInfoBase(), vol ? `vol-${vol[1]}` : "home") };
+};
+
+export const trashLayout = (platform: string = process.platform): TrashLayout =>
+  trashLayoutForRoot(trashDir(platform), platform);
 
 // is a cwd the trash FILES dir? (virtual URIs like recent:// resolve to junk
 // paths, never the trash root, so no guard needed at the call site)
-export const isTrashFilesDir = (p: string): boolean => {
-  const homeFiles = path.join(trashDir(), "files");
+export const isTrashFilesDir = (p: string, platform: string = process.platform): boolean => {
+  const homeFiles = trashLayout(platform).filesDir;
   try {
     if (path.resolve(p) === homeFiles) return true;
   } catch {}
   // topdir trashes (removable media) also count — check the target's own root
   try {
-    const roots = trashRootsFor(p);
-    return roots.some((r) => path.resolve(p) === path.join(r, "files"));
+    const roots = trashRootsFor(p, platform);
+    return roots.some((r) => path.resolve(p) === trashLayoutForRoot(r, platform).filesDir);
   } catch {
     return false;
   }
@@ -34,11 +65,14 @@ export const isTrashFilesDir = (p: string): boolean => {
 // is a path the trash FILES dir or anything under it? Files landing there
 // without .trashinfo are unrestorable, so paste/move targets must check the
 // SUBTREE (unlike isTrashFilesDir, which matches the dir itself exactly).
-export const isInTrashFiles = (p: string): boolean => {
+export const isInTrashFiles = (p: string, platform: string = process.platform): boolean => {
   try {
     const target = path.resolve(p);
-    const roots = [path.join(trashDir(), "files"), ...trashRootsFor(p).map((r) => path.join(r, "files"))];
-    return roots.some((root) => target === path.resolve(root) || target.startsWith(path.resolve(root) + path.sep));
+    const dirs = [
+      trashLayout(platform).filesDir,
+      ...trashRootsFor(p, platform).map((r) => trashLayoutForRoot(r, platform).filesDir),
+    ];
+    return dirs.some((root) => target === path.resolve(root) || target.startsWith(path.resolve(root) + path.sep));
   } catch {
     return false;
   }
@@ -59,19 +93,19 @@ export const isWithinOrEqual = (inner: string, outer: string): boolean => {
 
 // best-effort count of home-trash entries for the empty-trash confirm
 // prompt. -1 when the trash is unreadable (prompt omits the count then).
-export const countTrashItems = (mountsText?: string): number => {
+export const countTrashItems = (mountsText?: string, platform: string = process.platform): number => {
   let home: string[];
   try {
-    home = readdirSync(path.join(trashDir(), "files"));
+    home = readdirSync(trashLayout(platform).filesDir);
   } catch {
     return -1;
   }
   let n = home.length;
-  // per-mount trashes ($topdir/.Trash-$uid) hold real entries too — the
-  // confirm count must not under-report them
-  for (const dir of allTrashFilesDirs(mountsText)) {
+  // per-mount trashes hold real entries too — the confirm count must not
+  // under-report them
+  for (const dir of allTrashFilesDirs(mountsText, platform)) {
     try {
-      if (path.resolve(dir) === path.resolve(path.join(trashDir(), "files"))) continue;
+      if (path.resolve(dir) === path.resolve(trashLayout(platform).filesDir)) continue;
     } catch {
       continue;
     }
@@ -84,19 +118,39 @@ export const countTrashItems = (mountsText?: string): number => {
   return n;
 };
 
-// every trash FILES dir currently mounted: home first, then one
-// `<mountpoint>/.Trash-<uid>/files` per /proc/mounts entry. Unreadable or
-// missing dirs are still listed (callers readdir best-effort) — only the
-// parse itself must never throw. mountsText is an injectable seam (tests pass
-// a fake table; production reads /proc/mounts).
-export const allTrashFilesDirs = (mountsText?: string): string[] => {
-  const home = path.join(trashDir(), "files");
+// every trash layout currently mounted, home first. Linux: one root
+// (`<mountpoint>/.Trash-<uid>`) per /proc/mounts entry — unreadable or
+// missing dirs are still listed (callers readdir best-effort); only the
+// enumeration itself must never throw. mountsText is an injectable seam
+// (tests pass a fake table; production reads /proc/mounts). macOS: one root
+// per EXISTING /Volumes/<vol>/.Trashes/<uid> (a volume without one has no
+// trash yet — nothing to list, count or empty).
+export const allTrashLayouts = (mountsText?: string, platform: string = process.platform): TrashLayout[] => {
+  const home = trashLayout(platform);
   const out = [home];
   const seen = new Set<string>();
   try {
-    seen.add(path.resolve(home));
+    seen.add(path.resolve(home.filesDir));
   } catch {}
   const uid = typeof process.getuid === "function" ? process.getuid() : 0;
+  if (isDarwin(platform)) {
+    let vols: string[] = [];
+    try {
+      vols = readdirSync("/Volumes");
+    } catch {}
+    for (const vol of vols) {
+      const root = path.join("/Volumes", vol, ".Trashes", String(uid));
+      try {
+        if (!lstatSync(root).isDirectory()) continue;
+        const r = path.resolve(root);
+        if (!seen.has(r)) {
+          seen.add(r);
+          out.push(trashLayoutForRoot(root, platform));
+        }
+      } catch {}
+    }
+    return out;
+  }
   let text: string;
   if (mountsText !== undefined) {
     text = mountsText;
@@ -111,15 +165,21 @@ export const allTrashFilesDirs = (mountsText?: string): string[] => {
     const mp = parseProcMountpoint(line);
     if (!mp) continue;
     try {
-      const r = path.resolve(path.join(mp, `.Trash-${uid}`, "files"));
+      const layout = trashLayoutForRoot(path.join(mp, `.Trash-${uid}`), platform);
+      const r = path.resolve(layout.filesDir);
       if (!seen.has(r)) {
         seen.add(r);
-        out.push(path.join(mp, `.Trash-${uid}`, "files"));
+        out.push(layout);
       }
     } catch {}
   }
   return out;
 };
+
+// every trash FILES dir currently mounted (home first) — the files half of
+// allTrashLayouts, kept as its own export for the existing callers/tests.
+export const allTrashFilesDirs = (mountsText?: string, platform: string = process.platform): string[] =>
+  allTrashLayouts(mountsText, platform).map((l) => l.filesDir);
 
 // network and automount filesystems never hold tfm trash (trashPaths refuses
 // network paths outright) — probing them here would hang on a dead server or
@@ -282,24 +342,39 @@ export const safeRestoreMove = async (src: string, dest: string): Promise<string
 
 // best-effort removal of one trashinfo sidecar (undo/restore cleanup). Never
 // throws — a stale .trashinfo is cosmetic, failing the whole undo over it is not.
-export const rmTrashInfo = async (name: string, log?: (msg: string) => void): Promise<void> => {
+export const rmTrashInfo = async (
+  name: string,
+  log?: (msg: string) => void,
+  platform: string = process.platform,
+): Promise<void> => {
   try {
-    await rm(path.join(trashDir(), "info", `${name}.trashinfo`));
+    await rm(path.join(trashLayout(platform).infoDir, `${name}.trashinfo`));
   } catch (err) {
     log?.(`trashinfo cleanup ${name}: ${fsErrText(err)}`);
   }
 };
 
-// sibling info path for per-mount trashes ($topdir/.Trash-$uid): a trash
-// location already encodes its root (<root>/files/<name>), so its sidecar is
-// <root>/info/<name>.trashinfo. Null unless the path is absolute and inside a
-// files dir (relative paths fall back to home lookup).
-export const trashInfoPathForTrashFile = (trashFilePath: string): string | null => {
+// sibling info path for a trashed file: a trash location encodes its root,
+// so the sidecar derives from the files dir containing it. Linux:
+// <root>/files/<name> → <root>/info/<name>.trashinfo. macOS: the files dir
+// IS the root (~/.Trash or /Volumes/<v>/.Trashes/<uid>) and the sidecar
+// lives in tfm's private info dir for that root. Null unless the path is
+// absolute and inside a files dir (relative paths fall back to home lookup).
+export const trashInfoPathForTrashFile = (
+  trashFilePath: string,
+  platform: string = process.platform,
+): string | null => {
   try {
     if (!path.isAbsolute(trashFilePath)) return null;
     const abs = path.resolve(trashFilePath);
-    if (path.basename(path.dirname(abs)) !== "files") return null;
-    return path.join(path.dirname(path.dirname(abs)), "info", `${path.basename(abs)}.trashinfo`);
+    const parent = path.dirname(abs);
+    if (isDarwin(platform)) {
+      const isRoot = parent === trashDir(platform) || /^\/Volumes\/[^/]+\/\.Trashes\/\d+$/.test(parent);
+      if (!isRoot) return null;
+      return path.join(trashLayoutForRoot(parent, platform).infoDir, `${path.basename(abs)}.trashinfo`);
+    }
+    if (path.basename(parent) !== "files") return null;
+    return path.join(path.dirname(parent), "info", `${path.basename(abs)}.trashinfo`);
   } catch {
     return null;
   }
@@ -312,8 +387,12 @@ export const trashInfoPathForTrashFile = (trashFilePath: string): string | null 
 // A missing sibling sidecar is NOT a home lookup: a home entry with the same
 // basename belongs to a different file, and deleting its .trashinfo would
 // orphan it (restore reads Path= from that sidecar).
-export const rmTrashInfoForPath = async (trashFilePath: string, log?: (msg: string) => void): Promise<void> => {
-  const sibling = trashInfoPathForTrashFile(trashFilePath);
+export const rmTrashInfoForPath = async (
+  trashFilePath: string,
+  log?: (msg: string) => void,
+  platform: string = process.platform,
+): Promise<void> => {
+  const sibling = trashInfoPathForTrashFile(trashFilePath, platform);
   if (sibling) {
     try {
       await rm(sibling);
@@ -322,7 +401,7 @@ export const rmTrashInfoForPath = async (trashFilePath: string, log?: (msg: stri
     }
     return;
   }
-  await rmTrashInfo(path.basename(trashFilePath), log);
+  await rmTrashInfo(path.basename(trashFilePath), log, platform);
 };
 
 // --- XDG trash spec helpers ---
@@ -336,8 +415,17 @@ export const encodeTrashPath = (p: string): string => pathToUri(path.resolve(p))
 // Candidate trash roots for a target: home trash always, plus the topdir
 // trash ($topdir/.Trash-$uid) when the target lives on another filesystem
 // (removable media — spec §2). Resolved per call for env-redirection tests.
-const trashRootsFor = (target: string): string[] => {
-  const home = trashDir();
+// macOS: a target under /Volumes/<vol> belongs to that volume's
+// .Trashes/<uid> (same-volume rename, exactly where Finder puts it); the
+// device walk below is Linux-mount shaped and doesn't apply.
+const trashRootsFor = (target: string, platform: string = process.platform): string[] => {
+  const home = trashDir(platform);
+  if (isDarwin(platform)) {
+    const m = path.resolve(target).match(/^\/Volumes\/([^/]+)\//);
+    if (!m) return [home];
+    const uid = typeof process.getuid === "function" ? process.getuid() : 0;
+    return [path.join("/Volumes", m[1]!, ".Trashes", String(uid)), home];
+  }
   // unreadable home-parent (the XDG data dir may not exist yet) = home trash
   // only — the old homedir fallback was unreachable (inside one try, the
   // first lstat's throw jumped straight to catch), so deviceOf must not make
@@ -387,13 +475,13 @@ const trashRootsFor = (target: string): string[] => {
 // Then the file moves, then the placeholder is overwritten with the real
 // Path=/DeletionDate=. If the move fails the placeholder is removed (no
 // orphan entry); if the final info write fails the move rolls back.
-export const xdgTrashMove = async (p: string): Promise<string> => {
+export const xdgTrashMove = async (p: string, platform: string = process.platform): Promise<string> => {
   const absSrc = path.resolve(p);
-  const roots = trashRootsFor(absSrc);
+  const roots = trashRootsFor(absSrc, platform);
   let lastErr: unknown = null;
   for (const root of roots) {
     try {
-      return await xdgTrashMoveToRoot(absSrc, root);
+      return await xdgTrashMoveToRoot(absSrc, root, fsMove, platform);
     } catch (err) {
       lastErr = err;
       // topdir may be read-only/unwritable — fall through to home trash
@@ -408,9 +496,9 @@ export const xdgTrashMoveToRoot = async (
   // injectable move (default fsMove): the sudo replace-stash runs the SAME
   // claim/rename/finalize loop with sudo-mv — one loop, not a near-clone.
   move: (src: string, dest: string) => Promise<void> = fsMove,
+  platform: string = process.platform,
 ): Promise<string> => {
-  const filesDir = path.join(root, "files");
-  const infoDir = path.join(root, "info");
+  const { filesDir, infoDir } = trashLayoutForRoot(root, platform);
   await mkdir(filesDir, { recursive: true });
   await mkdir(infoDir, { recursive: true });
   const base = path.basename(absSrc);
@@ -520,13 +608,18 @@ export const fileIdMatches = (id: FileId | null, p: string): boolean => {
 // at the desired end-state (success, nothing to do); a reoccupied path is
 // skipped with a log (trashing the stranger would be wrong) — neither throws.
 // A null id falls back to plain path semantics. Real trash errors propagate.
-export const trashIfSameFile = async (p: string, id: FileId | null, log?: (msg: string) => void): Promise<void> => {
+export const trashIfSameFile = async (
+  p: string,
+  id: FileId | null,
+  log?: (msg: string) => void,
+  platform: string = process.platform,
+): Promise<void> => {
   if (!existsSync(p)) return;
   if (id && !fileIdMatches(id, p)) {
     log?.(`undo trash ${p}: file replaced since op, skipped`);
     return;
   }
-  await xdgTrashMove(p);
+  await xdgTrashMove(p, platform);
 };
 
 // tmp+rename write: a crash or EDQUOT mid-write never leaves a truncated
