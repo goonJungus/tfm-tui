@@ -17,7 +17,7 @@ import path from "node:path";
 import { makeFileOps, type FileOpsCtx } from "./fileops";
 import type { UndoJournalData } from "../app/undo";
 import { archiveUri } from "./archive-scheme";
-import { trashDir } from "./fsutil";
+import { trashLayout } from "./fsutil";
 import type { ArchiveRun, ToolSpec } from "./archive";
 import type { ProgressState } from "../ui/ui-progress";
 import { sharedPluginHooks } from "../lib/plugin-hooks";
@@ -76,7 +76,6 @@ const makeHarness = (over: Partial<FileOpsCtx> = {}) => {
   let lastRedos: Array<() => void | Promise<void>> = [];
   let lastData: UndoJournalData | null = null;
   const ctx: FileOpsCtx = {
-    platform: "linux",
     conflict: {
       resetPolicy: () => calls.push("policy:reset"),
       policy: () => null,
@@ -771,7 +770,7 @@ describe("trash guards", () => {
     const src = path.join(ROOT, "paste-guard-src.txt");
     W(src, "keep me");
     h.ops.setClipboard("copy", [{ path: src, isDir: false }]);
-    h.ops.pasteSmart(path.join(trashDir("linux"), "files"));
+    h.ops.pasteSmart(trashLayout().filesDir);
     expect(h.calls).toContain("notify:paste:error:Can't paste into Trash");
     expect(h.calls.some((c) => c.startsWith("undo:"))).toBe(false);
     expect(existsSync(src)).toBe(true);
@@ -781,7 +780,7 @@ describe("trash guards", () => {
     const h = makeHarness();
     const src = path.join(ROOT, "move-guard-src.txt");
     W(src, "keep me");
-    const trashFiles = path.join(trashDir("linux"), "files");
+    const trashFiles = trashLayout().filesDir;
     await h.ops.moveInto(trashFiles, [{ path: src, isDir: false }]);
     expect(h.calls).toContain("notify:move:error:Can't move into Trash");
     expect(h.calls.some((c) => c.startsWith("undo:"))).toBe(false);
