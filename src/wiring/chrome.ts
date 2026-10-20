@@ -594,8 +594,15 @@ export const wireChrome = async (deps: {
   const runCmdCapture = async (argv: string[]): Promise<GioResult> => {
     try {
       const proc = Bun.spawn(argv, { stdin: "ignore", stdout: "pipe", stderr: "pipe", timeout: GIO_TIMEOUT_MS });
-      const [stdout, stderr] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
+      const [stdout, rawStderr] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
       await proc.exited;
+      // osascript prints a warning per broken scripting addition on this
+      // machine (OmniWM osax) ahead of any real error — drop those lines
+      // so failure toasts carry the actual message
+      const stderr = rawStderr
+        .split("\n")
+        .filter((l) => !/OpenScripting\.framework|ScriptingAdditions/.test(l))
+        .join("\n");
       return { code: proc.exitCode ?? 1, stdout, stderr };
     } catch (err) {
       return { code: 127, stdout: "", stderr: errMessage(err) };
