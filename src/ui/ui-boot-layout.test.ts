@@ -108,11 +108,15 @@ describe("sidebar title block", () => {
     const frame = t.captureCharFrame();
     expect(frame).toContain("\u{F179}");
     expect(frame).not.toContain("terminal file manager");
+    // leave no stray title in the shared renderer — later describes click
+    // by coordinates and a visible logo box would sit in their hit path
+    node("tfm-title-box")?.destroy?.();
   });
 
   test("logo glyph is the Arch mark off macOS", async () => {
     await mountTitle("logo", "linux");
     expect(t.captureCharFrame()).toContain("\u{F303}");
+    node("tfm-title-box")?.destroy?.();
   });
 });
 
