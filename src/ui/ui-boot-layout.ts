@@ -35,13 +35,71 @@ import {
 //   tfm   = the ORIGINAL title: accent ASCII wordmark + "terminal file manager"
 //   files = the same wordmark style spelling "Files", sidebar white, no tagline
 //   none  = the block keeps its rows but paints nothing
-//   logo  = the platform logo glyph in the accent color, no text (below)
+//   logo  = ASCII-art platform logo in the accent color, no text (below)
 // All children are built in EVERY mode and flipped by visibility, so a mode
 // change is a retheme paint (.text/.color/.visible — no node creation).
 
-// Nerd Font brand glyphs: fa-apple / linux-archlinux. The terminal font
-// supplies the artwork; a font without them shows the usual fallback box.
-export const titleLogoGlyph = (platform: string): string => (platform === "darwin" ? "\u{F179}" : "\u{F303}");
+// Platform marks as 1-bit bitmaps (two sub-rows per terminal row, rendered
+// as half blocks below): the Apple silhouette on macOS, the Arch "A" on
+// Linux. Both are 18 sub-rows tall so the title block height is one number.
+const APPLE_BITMAP = [
+  "0000000001100000",
+  "0000000011110000",
+  "0000000111100000",
+  "0000000110000000",
+  "0000001100000000",
+  "0001110011110000",
+  "0011111111111000",
+  "0111111111111100",
+  "1111111111111110",
+  "1111111111111000",
+  "1111111111110000",
+  "1111111111110000",
+  "1111111111111000",
+  "1111111111111100",
+  "0111111111111100",
+  "0011111111111000",
+  "0001111001110000",
+  "0000110000110000",
+];
+const archHalf = [
+  "000000001",
+  "000000011",
+  "000000111",
+  "000001111",
+  "000001111",
+  "000011111",
+  "000011110",
+  "000111100",
+  "000111000",
+  "001111111",
+  "001110000",
+  "011110000",
+  "011100000",
+  "111100000",
+  "111000000",
+  "111000000",
+  "110000000",
+  "100000000",
+];
+const ARCH_BITMAP = archHalf.map((half) => half + [...half].reverse().join(""));
+
+const HALF_BLOCK: Record<string, string> = { "11": "█", "10": "▀", "01": "▄", "00": " " };
+
+export const titleLogoArt = (platform: string): string[] => {
+  const bitmap = platform === "darwin" ? APPLE_BITMAP : ARCH_BITMAP;
+  const lines: string[] = [];
+  for (let i = 0; i < bitmap.length; i += 2) {
+    const top = bitmap[i]!;
+    const bottom = bitmap[i + 1] ?? "0".repeat(top.length);
+    let line = "";
+    for (let c = 0; c < top.length; c++) line += HALF_BLOCK[top[c]! + bottom[c]!]!;
+    lines.push(line.replace(/\s+$/, ""));
+  }
+  return lines;
+};
+
+export const TITLE_LOGO_ROWS = titleLogoArt("linux").length;
 
 export const buildTitle = (opts: {
   width: number;
@@ -57,8 +115,9 @@ export const buildTitle = (opts: {
       width: opts.width,
       // files shows only the 2-row wordmark (no tagline): one row shorter, so
       // the centered wordmark keeps tfm's 1-above/1-below breathing room
-      // instead of gaining a second dead row on top
-      height: files ? 4 : 5,
+      // instead of gaining a second dead row on top. logo is exactly its
+      // art's row count.
+      height: files ? 4 : mode === "logo" ? TITLE_LOGO_ROWS : 5,
       visible: mode !== "none",
       flexDirection: "column",
       justifyContent: "center",
@@ -81,12 +140,19 @@ export const buildTitle = (opts: {
     }),
     Text({
       id: "tfm-title-logo",
-      content: titleLogoGlyph(opts.platform ?? process.platform),
+      // the art is pre-centered per line: the box pads 1 on the left, so
+      // center within the remaining inner width
+      content: titleLogoArt(opts.platform ?? process.platform)
+        .map((line) => {
+          const inner = Math.max(1, opts.width - 1);
+          const pad = Math.max(0, Math.floor((inner - line.length) / 2));
+          return " ".repeat(pad) + line;
+        })
+        .join("\n"),
       fg: opts.colors.accent,
       visible: mode === "logo",
-      // centered in the box's inner width (the box pads 1 on the left)
       width: Math.max(1, opts.width - 1),
-      textAlign: "center",
+      wrapMode: "none",
     }),
   );
 };

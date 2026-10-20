@@ -2,7 +2,14 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { Box, Text } from "@opentui/core";
 import { createTestRenderer, type TestRendererSetup } from "@opentui/core/testing";
 import { defaultConfig } from "../config/config-schema";
-import { buildAppContainer, buildBootLayout, buildTitle, scrollbarTrackColors } from "./ui-boot-layout";
+import {
+  buildAppContainer,
+  buildBootLayout,
+  buildTitle,
+  scrollbarTrackColors,
+  TITLE_LOGO_ROWS,
+  titleLogoArt,
+} from "./ui-boot-layout";
 import { BAND_ID } from "../input/grid-input";
 import { SCRIM_FILL_ID, SCRIM_FILL_Z } from "./scrim";
 
@@ -98,24 +105,27 @@ describe("sidebar title block", () => {
     expect(node("tfm-title-box").visible).toBe(false);
   });
 
-  test("logo mode shows the platform glyph in the accent, no wordmark or tagline", async () => {
+  test("logo mode shows ASCII-art platform logo in the accent, no wordmark or tagline", async () => {
     await mountTitle("logo", "darwin");
     expect(node("tfm-title-logo").visible).toBe(true);
     expect([...node("tfm-title-logo").fg.toInts()]).toEqual(hexInts(theme.accent));
     expect(node("tfm-title-font").visible).toBe(false);
     expect(node("tfm-title-sub").visible).toBe(false);
-    expect(node("tfm-title-box").height).toBe(5);
+    expect(node("tfm-title-box").height).toBe(TITLE_LOGO_ROWS);
     const frame = t.captureCharFrame();
-    expect(frame).toContain("\u{F179}");
+    // the apple's bottom lobes are its signature row
+    expect(frame).toContain("▀██▀  ▀██");
     expect(frame).not.toContain("terminal file manager");
     // leave no stray title in the shared renderer — later describes click
     // by coordinates and a visible logo box would sit in their hit path
     node("tfm-title-box")?.destroy?.();
   });
 
-  test("logo glyph is the Arch mark off macOS", async () => {
+  test("logo art is the Arch mark off macOS, same row count", async () => {
     await mountTitle("logo", "linux");
-    expect(t.captureCharFrame()).toContain("\u{F303}");
+    // the arch's splayed feet are its signature row
+    expect(t.captureCharFrame()).toContain("█▀              ▀█");
+    expect(titleLogoArt("darwin")).toHaveLength(titleLogoArt("linux").length);
     node("tfm-title-box")?.destroy?.();
   });
 });

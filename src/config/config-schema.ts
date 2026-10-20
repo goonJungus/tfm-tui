@@ -545,7 +545,7 @@ const UI_ROWS: SchemaRow[] = [
     prop: "sidebarTitle",
     values: ["tfm", "files", "none", "logo"],
     def: "tfm",
-    doc: '"tfm" = the accent ASCII "tfm" wordmark + tagline above the places sidebar; "files" = the same style spelling "Files" in the sidebar white; "none" = keep the space, show nothing; "logo" = the platform logo glyph (Apple on macOS, Arch on Linux) in the accent color, no text',
+    doc: '"tfm" = the accent ASCII "tfm" wordmark + tagline above the places sidebar; "files" = the same style spelling "Files" in the sidebar white; "none" = keep the space, show nothing; "logo" = an ASCII-art platform logo (Apple on macOS, Arch on Linux) in the accent color, no text',
     label: "sidebar title",
     blurb: "What sits above the sidebar",
     group: "layout",

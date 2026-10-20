@@ -12,6 +12,7 @@ import { bumpHex } from "../config/color";
 import { isDark, resolveTtyMode, ttyStaticTheme } from "./tty";
 import { applySurface, chromeSurface, floatSurface } from "./style";
 import { BAND_ID, DRAG_GHOST_ID } from "../input/grid-input";
+import { TITLE_LOGO_ROWS } from "./ui-boot-layout";
 import { backgroundClearColor } from "./scrim";
 import { loadConfig, saveConfig, configPath, type Config, type Theme } from "../config/config";
 import { describeKeybindConflicts, findKeybindConflicts } from "../config/config-schema";
@@ -96,7 +97,7 @@ export const makeRetheme = (ctx: RethemeCtx) => {
     setOnId("tfm-title-box", (n) => {
       // files shows only the 2-row wordmark (buildTitle's height) — without
       // this a live mode flip keeps the 5-row box and its extra dead row
-      n.height = files ? 4 : 5;
+      n.height = files ? 4 : mode === "logo" ? TITLE_LOGO_ROWS : 5;
     });
     setOnId("tfm-title-font", (n) => {
       n.text = files ? "Files" : "tfm";
