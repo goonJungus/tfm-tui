@@ -271,7 +271,7 @@ describe("availableCompressionFormats / canExtract", () => {
     const all = which(
       ...["tar", "gzip", "zip", "7z", "xz", "bzip2", "zstd", "lzma", "lz4", "brotli", "lzip", "lzop", "compress"],
     );
-    expect(availableCompressionFormats(all)).toEqual([
+    expect(availableCompressionFormats(all, "linux")).toEqual([
       "tar.gz",
       "zip",
       "7z",
@@ -287,35 +287,36 @@ describe("availableCompressionFormats / canExtract", () => {
       "tar.Z",
     ]);
     // rar is read-only: never a compress target even with every tool present
-    expect(availableCompressionFormats(all)).not.toContain("rar");
+    expect(availableCompressionFormats(all, "linux")).not.toContain("rar");
   });
 
   test("missing compressors hide their tar rows; zip falls back to 7z", () => {
-    expect(availableCompressionFormats(which("tar"))).toEqual(["tar.gz", "zip", "tar"]);
-    expect(availableCompressionFormats(which("tar", "gzip"))).toEqual(["tar.gz", "zip", "tar"]);
+    expect(availableCompressionFormats(which("tar"), "linux")).toEqual(["tar.gz", "zip", "tar"]);
+    expect(availableCompressionFormats(which("tar", "gzip"), "linux")).toEqual(["tar.gz", "zip", "tar"]);
     // no zip binary, no 7z -> the js fallback still offers zip
-    expect(availableCompressionFormats(which("tar", "zip"))).toContain("zip");
-    expect(availableCompressionFormats(which("tar", "7z"))).toContain("zip");
+    expect(availableCompressionFormats(which("tar", "zip"), "linux")).toContain("zip");
+    expect(availableCompressionFormats(which("tar", "7z"), "linux")).toContain("zip");
     // 7z and exotic filters have no fallback: without their tools they hide
-    expect(availableCompressionFormats(which("tar"))).not.toContain("7z");
-    expect(availableCompressionFormats(which("tar"))).not.toContain("tar.xz");
-    expect(availableCompressionFormats(() => null)).toEqual(["tar.gz", "zip", "tar"]);
+    expect(availableCompressionFormats(which("tar"), "linux")).not.toContain("7z");
+    expect(availableCompressionFormats(which("tar"), "linux")).not.toContain("tar.xz");
+    expect(availableCompressionFormats(() => null, "linux")).toEqual(["tar.gz", "zip", "tar"]);
   });
 
   test("canExtract needs the matching toolchain — except fallback formats", () => {
-    expect(canExtract("a.zip", which("unzip"))).toBe(true);
-    expect(canExtract("a.zip", which("7z"))).toBe(true);
-    expect(canExtract("a.zip", which("tar"))).toBe(true); // js fallback, no tools needed
-    expect(canExtract("a.tar.gz", which("tar", "gzip"))).toBe(true);
-    expect(canExtract("a.tar.gz", which("tar"))).toBe(true); // js fallback (gzip is not optional for spawn)
-    expect(canExtract("a.tar.gz", () => null)).toBe(true);
-    expect(canExtract("a.tar.lz4", which("tar", "lz4"))).toBe(true);
-    expect(canExtract("a.tar.lz4", which("tar"))).toBe(false); // no fallback for exotic filters
-    expect(canExtract("a.7z", which("7z"))).toBe(true);
-    expect(canExtract("a.7z", () => null)).toBe(false); // no fallback for 7z
-    expect(canExtract("a.rar", which("7z"))).toBe(true);
-    expect(canExtract("a.rar", () => null)).toBe(false); // read-only, host-gated on 7z
-    expect(canExtract("a.txt", which("tar", "gzip"))).toBe(false);
+    expect(canExtract("a.zip", which("unzip"), "linux")).toBe(true);
+    expect(canExtract("a.zip", which("7z"), "linux")).toBe(true);
+    expect(canExtract("a.zip", which("tar"), "linux")).toBe(true); // js fallback, no tools needed
+    expect(canExtract("a.tar.gz", which("tar", "gzip"), "linux")).toBe(true);
+    expect(canExtract("a.tar.gz", which("tar"), "linux")).toBe(true); // js fallback (gzip is not optional for spawn)
+    expect(canExtract("a.tar.gz", () => null, "linux")).toBe(true);
+    expect(canExtract("a.tar.lz4", which("tar", "lz4"), "linux")).toBe(true);
+    expect(canExtract("a.tar.lz4", which("tar"), "linux")).toBe(false); // no fallback for exotic filters
+    expect(canExtract("a.tar.lz4", which("tar"), "darwin")).toBe(true); // bsdtar/libarchive reads it natively
+    expect(canExtract("a.7z", which("7z"), "linux")).toBe(true);
+    expect(canExtract("a.7z", () => null, "linux")).toBe(false); // no fallback for 7z
+    expect(canExtract("a.rar", which("7z"), "linux")).toBe(true);
+    expect(canExtract("a.rar", () => null, "linux")).toBe(false); // read-only, host-gated on 7z
+    expect(canExtract("a.txt", which("tar", "gzip"), "linux")).toBe(false);
   });
 });
 

@@ -243,19 +243,22 @@ export const compressPlan = (
   return { tool: "7z", args: ["a", "-bb1", "-bso2", "-tzip", "-y", outFile, "--", ...zipNames] };
 };
 
-export const availableCompressionFormats = (which: WhichFn = Bun.which): CompressionFormat[] =>
+export const availableCompressionFormats = (
+  which: WhichFn = Bun.which,
+  platform: string = process.platform,
+): CompressionFormat[] =>
   // tar/tar.gz/zip always show: the js fallback covers a tool-less machine
   // (7z and exotic tar filters still need their binaries and hide without).
   // rar is read-only (7z can't create it) so it never appears as a target.
   COMPRESSIONS.filter(
     (d): d is CompressionDef & { fmt: CompressionFormat } =>
-      d.fmt !== "rar" && (canCreate(d, which) || JS_FORMATS.has(d.fmt)),
+      d.fmt !== "rar" && (canCreate(d, which, platform) || JS_FORMATS.has(d.fmt)),
   ).map((d) => d.fmt);
 
-export const canExtract = (file: string, which: WhichFn = Bun.which): boolean => {
+export const canExtract = (file: string, which: WhichFn = Bun.which, platform: string = process.platform): boolean => {
   const fmt = detectArchiveFormat(file);
   if (!fmt) return false;
-  return canExtractFmt(defOf(fmt), which) || JS_FORMATS.has(fmt);
+  return canExtractFmt(defOf(fmt), which, platform) || JS_FORMATS.has(fmt);
 };
 
 // --- fallback lanes: tar/tar.gz/zip work with no system tools (Bun.Archive
@@ -580,6 +583,12 @@ export const listArchiveMembers = async (
       if (name) members.push({ name, dir: name.endsWith("/") });
     },
   });
+  // exit 1 is "listed, with warnings" for GNU tar — but bsdtar also exits
+  // 1 for a MISSING/unreadable archive, where the "members" collected
+  // above are really its stderr error lines (the line stream merges both
+  // pipes). A real listing always names entries on stdout; an empty
+  // stdout with a nonzero code means nothing was listed at all.
+  if (res.code !== 0 && !(res.stdout ?? "").trim()) return null;
   return res.code === 0 || res.code === 1 ? members : null;
 };
 
