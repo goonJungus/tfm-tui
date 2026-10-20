@@ -1,3 +1,20 @@
+> ## macOS port
+>
+> This fork ports [tfm-tui](https://github.com/clarkarch/tfm-tui) **v1.1.0** to macOS. The upstream README follows below, unchanged; the original project is BSD 3-Clause (see `LICENSE`).
+>
+> What the port changes:
+>
+> - Every platform difference sits behind one seam (`src/fs/platform.ts`); Linux behavior is untouched.
+> - Opening files via `open`, clipboard via `pbcopy`/`pbpaste`, drives and eject via `diskutil`, Mach-O executable detection, BSD forms of the `sudo`/`stat`/`mv`/`tar` dialects.
+> - Trash uses Finder's own layout (`~/.Trash`, `/Volumes/*/.Trashes/<uid>`) with tfm restore sidecars. A small Swift helper (`native/macos/`, built into `bin/tfm-mac-helper`) adds Finder **Put Back** and the LaunchServices **Open With** list.
+> - Connect to Server mounts through Finder and enumerates from the mount table; network paths are detected from it too.
+> - The Linux self-installer/updater refuses on macOS by design (it would install a Linux binary).
+> - Extra: a `sidebar-title = "logo"` mode — an ASCII-art platform logo (Apple on macOS, Arch on Linux) above the sidebar.
+>
+> Build on macOS: install [Bun](https://bun.sh) and Zig, clone this repo and [opentui-fork](https://github.com/clarkarch/opentui-fork) side by side, build the fork's `packages/core` (`bun run build` there), run `native/macos/build.sh` for the helper, then `bun install --frozen-lockfile && bun run compile` here.
+>
+> Port by Muse Spark.
+
 <h1 align="center">
   <img src="assets/icons/tfm.svg" width="192" alt="tfm logo"><br>
   tfm (terminal file manager)<br>
