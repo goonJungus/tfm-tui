@@ -16,6 +16,7 @@ import {
   type FileId,
   fileIdMatches,
   fileIdOf,
+  isSameFile,
   fsErrText,
   fsMove,
   isInTrashFiles,
@@ -985,7 +986,9 @@ export const makeFileOps = (ctx: FileOpsCtx) => {
         dUnits.push({ op: "rename", from: to, to: from });
         redos.push(async () => {
           try {
-            if (existsSync(from) && !existsSync(to)) await fsRename(from, to);
+            // a case-only rename's target "exists" as the source itself on
+            // case-insensitive filesystems — that must not block the redo
+            if (existsSync(from) && (!existsSync(to) || isSameFile(from, to))) await fsRename(from, to);
           } catch (err) {
             ctx.log(`redo rename ${to}: ${fsErrText(err)}`);
           }
@@ -1001,8 +1004,10 @@ export const makeFileOps = (ctx: FileOpsCtx) => {
         }
         // plan-time collision check is inherently racy (TOCTOU: an external
         // create — or an earlier pair's target — can land between plan and
-        // apply) — re-check here so fsRename never silently overwrites
-        if (existsSync(to)) {
+        // apply) — re-check here so fsRename never silently overwrites.
+        // Exception: the target IS the source under another case spelling
+        // (case-insensitive fs) — a case-only rename overwrites nothing.
+        if (existsSync(to) && !isSameFile(from, to)) {
           failed++;
           failWhy.add(`already exists: ${path.basename(to)}`);
           continue;

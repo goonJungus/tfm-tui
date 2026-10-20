@@ -332,9 +332,21 @@ export const fsMove = async (src: string, dest: string): Promise<void> => {
 // rename() silently overwrites on Linux, so a file created between the original
 // op and ctrl+z would be destroyed. Bump to "name (copy)" instead. Returns
 // the final destination (== dest unless it was occupied).
+// same underlying file behind two path spellings — on a case-insensitive
+// filesystem (APFS default) a case-only rename's target "exists" and IS
+// the source. Identity is dev+ino; unknown ids (unreadable paths) answer
+// false so callers keep their conservative no-clobber behavior.
+export const isSameFile = (a: string, b: string): boolean => {
+  const ia = fileIdOf(a);
+  const ib = fileIdOf(b);
+  return ia !== null && ib !== null && ia.dev === ib.dev && ia.ino === ib.ino;
+};
+
 export const safeRestoreMove = async (src: string, dest: string): Promise<string> => {
   let d = dest;
-  if (existsSync(d)) d = uniqueTarget(path.dirname(d), path.basename(d));
+  // a dest occupied by the source itself (case-only rename undo) is not a
+  // stranger to protect — move straight onto it
+  if (existsSync(d) && !isSameFile(src, d)) d = uniqueTarget(path.dirname(d), path.basename(d));
   await mkdir(path.dirname(d), { recursive: true });
   await fsMove(src, d);
   return d;
