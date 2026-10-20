@@ -22,6 +22,9 @@ const mk = (plugins?: () => LoadedPlugin[], over: Partial<SettingsModelCtx> = {}
   const ctx: SettingsModelCtx = {
     config,
     state,
+    // the row-shape contract under test is the Linux one (incl. the
+    // default-file-manager row); darwin gating has its own coverage
+    platform: "linux",
     applyConfig: (fresh) => {
       applied.push(structuredClone(fresh));
       Object.assign(config.ui, fresh.ui);
@@ -997,6 +1000,11 @@ describe("hand-written rows", () => {
     expect(h.warns[0]!.title).toBe("theme");
     h.config.theme = { ...h.config.theme, bg: "#e1e2e7" };
     expect(row.customLabel()).toBe("Console Light");
+  });
+
+  test("darwin hides the default file manager row entirely", () => {
+    const h = mk(undefined, { platform: "darwin" });
+    expect(h.rows().some((r) => r.label === "set tfm as default manager")).toBe(false);
   });
 
   test("default file manager row is an action that always spawns the confirm", async () => {

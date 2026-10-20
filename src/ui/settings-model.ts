@@ -59,6 +59,9 @@ export type SettingsModelCtx = {
   // console-mode read: when active the theme row is display-only (one static
   // console palette paints regardless of presets). Optional so tests stay light.
   isTtyMode?(): boolean;
+  // platform override for platform-gated rows (the default-file-manager row
+  // is Linux-only). Absent = the real process.platform. Tests pin it.
+  platform?: string;
   // git installer orchestration (wired in wiring/settings — prompt, danger
   // confirm, clone/pull/rm, rescan). Optional so row SHAPE stays testable
   // without it; rows no-op when absent. Never throws (fire-and-forget).
@@ -462,7 +465,7 @@ export const makeSettingModel = (ctx: SettingsModelCtx) => {
   const advancedRows = (): SettingRow[] => [
     // no default-file-manager row on macOS: Finder can't be replaced as
     // the folder handler, so the control would promise what it can't do
-    ...genericUiRows("advanced", { showLaunchTime: isDarwin() ? undefined : [defaultFileManagerRow()] }),
+    ...genericUiRows("advanced", { showLaunchTime: isDarwin(ctx.platform) ? undefined : [defaultFileManagerRow()] }),
     {
       kind: "action",
       label: "edit config.toml…",
