@@ -81,17 +81,19 @@ let sysBookmarks: BookmarkEntry[] = [];
 let sysMounts: MountEntry[] = [];
 let sysNetwork: NetworkMount[] = [];
 
-export const loadSystemPlaces = async (opts?: { skipMounts?: boolean }): Promise<void> => {
+export const loadSystemPlaces = async (opts?: { skipMounts?: boolean; platform?: string }): Promise<void> => {
   // four independent sources — await them concurrently so the sidebar load costs
   // the slowest one, not their sum. lsblk is ~20ms typical but measured 218ms
   // on slow udev (2026-10) — it is the only slow source, so first paint skips
   // it (skipMounts, boot-only: sysMounts is guaranteed empty there) and a
   // background refresh fills mounts in; sysMounts keeps its current value
-  // (empty at boot = "This Device" only).
+  // (empty at boot = "This Device" only). `platform` is injectable so tests
+  // can pin a platform's sources on any host.
+  const platform = opts?.platform ?? process.platform;
   const [dirs, marks, mounts, network] = await Promise.all([
-    readUserDirs(),
+    readUserDirs(platform),
     readBookmarks(),
-    opts?.skipMounts ? Promise.resolve<MountEntry[] | null>(null) : listMounts(),
+    opts?.skipMounts ? Promise.resolve<MountEntry[] | null>(null) : listMounts(platform),
     listNetworkMounts(),
   ]);
   sysUserDirs = dirs;
@@ -133,8 +135,8 @@ export const macUserDirs = (homeDir: string, isDir: (p: string) => boolean): Use
     .filter((d) => isDir(d.p))
     .sort((a, b) => (a.key < b.key ? -1 : 1));
 
-async function readUserDirs(): Promise<UserDir[]> {
-  if (isDarwin()) {
+async function readUserDirs(platform: string = process.platform): Promise<UserDir[]> {
+  if (isDarwin(platform)) {
     return macUserDirs(home, (p) => {
       try {
         return statSync(p).isDirectory();
@@ -416,8 +418,8 @@ async function listMountsDarwin(): Promise<MountEntry[]> {
 
 // exported for the device watcher (devwatch.ts): the poll diffs this list,
 // loadSystemPlaces() re-reads everything only when it changed
-export async function listMounts(): Promise<MountEntry[]> {
-  if (isDarwin()) return listMountsDarwin();
+export async function listMounts(platform: string = process.platform): Promise<MountEntry[]> {
+  if (isDarwin(platform)) return listMountsDarwin();
   try {
     // timeout: a wedged lsblk must not stall the sidebar load forever
     const { code, stdout } = await execLsblk(["-J", "-o", "NAME,PATH,RM,TRAN,LABEL,FSTYPE,MOUNTPOINTS,MOUNTPOINT"]);

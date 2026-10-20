@@ -157,7 +157,7 @@ describe("loadSystemPlaces + buildSections", () => {
     const tmp = mkdtempAndDirs();
     try {
       process.env.XDG_CONFIG_HOME = tmp.configHome;
-      await loadSystemPlaces();
+      await loadSystemPlaces({ platform: "linux" });
       const flat = buildSections().flatMap((s) => s.places);
       expect(flat[0]!.label).toBe("Home");
       expect(flat.some((p) => p.label === "Documents" && p.path === tmp.docs)).toBe(true);
@@ -228,14 +228,14 @@ describe("loadSystemPlaces skipMounts (lazy first paint)", () => {
     // full = spawn) — the second half used to live inline in the test above
     const { root, markerBytes } = await withLsblkStub();
     try {
-      await loadSystemPlaces({ skipMounts: true });
+      await loadSystemPlaces({ skipMounts: true, platform: "linux" });
       expect(markerBytes()).toBe(0);
       // the rest still loaded (sysMounts keeps whatever earlier tests left —
       // the skip only promises "no lsblk spawn", pinned above — so assert a
       // static section instead of mount-dependent content)
       expect(buildSections()[0]!.places[0]!.label).toBe("Home");
       // full load spawns lsblk (stub records it)
-      await loadSystemPlaces();
+      await loadSystemPlaces({ platform: "linux" });
       expect(markerBytes()).toBeGreaterThan(0);
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -281,7 +281,7 @@ describe("buildSections visibility toggles", () => {
     const tmp = mkdtempAndDirs();
     try {
       process.env.XDG_CONFIG_HOME = tmp.configHome;
-      await loadSystemPlaces();
+      await loadSystemPlaces({ platform: "linux" });
       const flat = buildSections({ showRecent: false, showStarred: false }).flatMap((s) => s.places);
       expect(flat.some((p) => p.label === "Home")).toBe(true);
       expect(flat.some((p) => p.scheme === "recent")).toBe(false);
@@ -295,7 +295,7 @@ describe("buildSections visibility toggles", () => {
     const tmp = mkdtempAndDirs();
     try {
       process.env.XDG_CONFIG_HOME = tmp.configHome;
-      await loadSystemPlaces();
+      await loadSystemPlaces({ platform: "linux" });
       const flat = buildSections({
         showUserDirs: false,
         showBookmarks: false,
@@ -319,7 +319,7 @@ describe("buildSections section titles", () => {
     const tmp = mkdtempAndDirs();
     try {
       process.env.XDG_CONFIG_HOME = tmp.configHome;
-      await loadSystemPlaces();
+      await loadSystemPlaces({ platform: "linux" });
       const titles = buildSections().map((s) => s.title);
       expect(titles[0]).toBe("Places");
       expect(titles).toContain("Folders");
@@ -335,7 +335,7 @@ describe("buildSections section titles", () => {
     const tmp = mkdtempAndDirs();
     try {
       process.env.XDG_CONFIG_HOME = tmp.configHome;
-      await loadSystemPlaces();
+      await loadSystemPlaces({ platform: "linux" });
       const titles = buildSections({
         showUserDirs: false,
         showBookmarks: false,

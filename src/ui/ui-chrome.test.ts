@@ -1093,7 +1093,7 @@ describe("eject / mount", () => {
 
   test("eject click stops propagation: the row never navigates", async () => {
     resetSeams();
-    await loadSystemPlaces();
+    await loadSystemPlaces({ platform: "linux" });
     ejectChrome.renderSidebar();
     await t.renderOnce();
     const stopped = clickEjectIcon(ejectSlotId());
@@ -1104,7 +1104,7 @@ describe("eject / mount", () => {
 
   test("eject leaves its own mountpoint before unmounting", async () => {
     resetSeams();
-    await loadSystemPlaces();
+    await loadSystemPlaces({ platform: "linux" });
     ejectChrome.renderSidebar();
     await t.renderOnce();
     cwd = "/media/usb/some/dir";
@@ -1123,7 +1123,7 @@ describe("eject / mount", () => {
 
   test("eject toasts safe-to-unplug after unmount + power-off", async () => {
     resetSeams();
-    await loadSystemPlaces();
+    await loadSystemPlaces({ platform: "linux" });
     ejectChrome.renderSidebar();
     await t.renderOnce();
     clickEjectIcon(ejectSlotId());
@@ -1140,7 +1140,7 @@ describe("eject / mount", () => {
 
   test("eject aborts the chain on an unmount failure (no power-off)", async () => {
     resetSeams();
-    await loadSystemPlaces();
+    await loadSystemPlaces({ platform: "linux" });
     ejectChrome.renderSidebar();
     await t.renderOnce();
     clickEjectIcon(ejectSlotId());
@@ -1156,7 +1156,7 @@ describe("eject / mount", () => {
 
   test("eject toasts failure when the spawn itself errors", async () => {
     resetSeams();
-    await loadSystemPlaces();
+    await loadSystemPlaces({ platform: "linux" });
     ejectChrome.renderSidebar();
     await t.renderOnce();
     clickEjectIcon(ejectSlotId());
@@ -1172,7 +1172,7 @@ describe("eject / mount", () => {
     // node fires error AND close on ENOENT — without a settled guard one
     // failure yields two error toasts
     resetSeams();
-    await loadSystemPlaces();
+    await loadSystemPlaces({ platform: "linux" });
     ejectChrome.renderSidebar();
     await t.renderOnce();
     clickEjectIcon(ejectSlotId());
@@ -1188,7 +1188,7 @@ describe("eject / mount", () => {
     // the context-menu Eject row builds the same spec object the icon path
     // uses, so ejectDevice can leave first either way
     resetSeams();
-    await loadSystemPlaces();
+    await loadSystemPlaces({ platform: "linux" });
     ejectChrome.renderSidebar();
     await t.renderOnce();
     cwd = "/media/usb/some/dir";
@@ -1203,7 +1203,7 @@ describe("eject / mount", () => {
     // the bridge lies about RM — without the TRAN rule this row would be a
     // mounted harddisk with no eject affordance at all
     resetSeams();
-    await loadSystemPlaces();
+    await loadSystemPlaces({ platform: "linux" });
     ejectChrome.renderSidebar();
     await t.renderOnce();
     const rec = ejectChrome.placesHost.find((r) => r.place.path === "/media/hdd1");
@@ -1217,7 +1217,7 @@ describe("eject / mount", () => {
     // a two-partition USB HDD: power-off with a part still mounted fails, so
     // the chain covers the whole disk even though the click names one row
     resetSeams();
-    await loadSystemPlaces();
+    await loadSystemPlaces({ platform: "linux" });
     ejectChrome.renderSidebar();
     await t.renderOnce();
     clickEjectIcon(ejectSlotId("/media/hdd1"));
@@ -1240,7 +1240,7 @@ describe("eject / mount", () => {
 
   test("ejecting from a sibling partition still leaves the disk first", async () => {
     resetSeams();
-    await loadSystemPlaces();
+    await loadSystemPlaces({ platform: "linux" });
     ejectChrome.renderSidebar();
     await t.renderOnce();
     cwd = "/media/hdd2/docs";
@@ -1254,7 +1254,7 @@ describe("eject / mount", () => {
 
   test("a failed power-off after clean unmounts says the data is safe", async () => {
     resetSeams();
-    await loadSystemPlaces();
+    await loadSystemPlaces({ platform: "linux" });
     ejectChrome.renderSidebar();
     await t.renderOnce();
     clickEjectIcon(ejectSlotId());
