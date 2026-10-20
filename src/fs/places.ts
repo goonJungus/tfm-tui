@@ -1,8 +1,9 @@
 import { statSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { execBun, type ExecBunResult } from "./exec-bun";
+import { isDarwin } from "./platform";
 import { fileUriToPath, pathToUri } from "./uri";
 import { trashDir } from "./fsutil";
 import { parseServerInput } from "./network";
@@ -115,7 +116,33 @@ const expandXdgValue = (raw: string): string => {
   return v.replace(/^\$HOME/, home).replace(/^~/, home);
 };
 
+// macOS has no user-dirs.dirs: the sidebar folders are fixed locations
+// under ~. "Videos" is ~/Movies (the folder's real name; the label stays
+// "Videos" to match the Linux sidebar).
+const MAC_USER_DIR_DEFS: Array<{ key: string; label: string; dir: string }> = [
+  { key: "XDG_DESKTOP_DIR", label: "Desktop", dir: "Desktop" },
+  { key: "XDG_DOWNLOAD_DIR", label: "Downloads", dir: "Downloads" },
+  { key: "XDG_DOCUMENTS_DIR", label: "Documents", dir: "Documents" },
+  { key: "XDG_MUSIC_DIR", label: "Music", dir: "Music" },
+  { key: "XDG_PICTURES_DIR", label: "Pictures", dir: "Pictures" },
+  { key: "XDG_VIDEOS_DIR", label: "Videos", dir: "Movies" },
+];
+
+export const macUserDirs = (homeDir: string, isDir: (p: string) => boolean): UserDir[] =>
+  MAC_USER_DIR_DEFS.map((d) => ({ key: d.key, label: d.label, p: path.join(homeDir, d.dir) }))
+    .filter((d) => isDir(d.p))
+    .sort((a, b) => (a.key < b.key ? -1 : 1));
+
 async function readUserDirs(): Promise<UserDir[]> {
+  if (isDarwin()) {
+    return macUserDirs(home, (p) => {
+      try {
+        return statSync(p).isDirectory();
+      } catch {
+        return false;
+      }
+    });
+  }
   try {
     const text = await readFile(xdgUserDirsFile(), "utf8");
     const out: UserDir[] = [];
@@ -274,9 +301,123 @@ export function parseLsblk(json: unknown): MountEntry[] {
   return out;
 }
 
+// --- macOS devices: diskutil replaces lsblk. diskutil speaks plist;
+// plutil (stock macOS) converts to JSON — via a temp file because execBun
+// offers no stdin pipe. Any failure resolves null/[] (sidebar degrades to
+// "This Device" only), mirroring the lsblk never-throws contract. ---
+
+export type DiskutilDiskInfo = { ejectable: boolean; removable: boolean; usb: boolean };
+
+type DiskutilVol = {
+  DeviceIdentifier?: string;
+  VolumeName?: string;
+  MountPoint?: string;
+  Content?: string;
+};
+type DiskutilDiskDict = DiskutilVol & {
+  Partitions?: DiskutilVol[];
+  APFSVolumes?: DiskutilVol[];
+  APFSPhysicalStores?: Array<{ DeviceIdentifier?: string }>;
+};
+
+const wholeDiskOf = (id: string): string => id.match(/^disk\d+/)?.[0] ?? id;
+
+// pure: diskutil-list JSON + per-whole-disk info -> the MountEntry model the
+// sidebar/devwatch already consume. Mounted rows surface only under
+// /Volumes (externals, disk images); internal volumes (/, the APFS Data
+// volume, /System/Volumes/*) ride the "This Device" row. Unmounted rows
+// surface only on removable/USB disks (click-to-mount, Nautilus-style).
+export const parseDiskutil = (list: unknown, infoByDisk: ReadonlyMap<string, DiskutilDiskInfo>): MountEntry[] => {
+  const dicts = (list as { AllDisksAndPartitions?: DiskutilDiskDict[] } | null)?.AllDisksAndPartitions ?? [];
+  // volume id -> WHOLE disk: a volume lives on its dict's disk; an APFS
+  // volume's dict is the container, whose physical store is the real disk
+  // (eject/power-off target it, not the container)
+  const diskOf = new Map<string, string>();
+  for (const d of dicts) {
+    const self = d.DeviceIdentifier;
+    if (!self) continue;
+    const store = d.APFSPhysicalStores?.[0]?.DeviceIdentifier;
+    const whole = store ? wholeDiskOf(store) : wholeDiskOf(self);
+    diskOf.set(self, whole);
+    for (const v of [...(d.Partitions ?? []), ...(d.APFSVolumes ?? [])]) {
+      if (v.DeviceIdentifier) diskOf.set(v.DeviceIdentifier, whole);
+    }
+  }
+  const out: MountEntry[] = [];
+  const push = (v: DiskutilVol): void => {
+    const id = v.DeviceIdentifier;
+    if (!id) return;
+    const target = v.MountPoint ?? "";
+    const whole = diskOf.get(id) ?? wholeDiskOf(id);
+    const info = infoByDisk.get(whole) ?? { ejectable: false, removable: false, usb: false };
+    if (target) {
+      if (!target.startsWith("/Volumes/")) return;
+    } else {
+      if (!v.VolumeName || v.Content === "EFI") return;
+      if (!info.removable && !info.usb) return;
+    }
+    if (target && out.some((o) => o.target === target)) return;
+    out.push({
+      label: v.VolumeName || (target ? path.basename(target) : id),
+      target,
+      removable: info.ejectable || info.removable,
+      usb: info.usb,
+      device: `/dev/${id}`,
+      disk: `/dev/${whole}`,
+    });
+  };
+  for (const d of dicts) {
+    for (const v of d.Partitions ?? []) push(v);
+    for (const v of d.APFSVolumes ?? []) push(v);
+  }
+  return out;
+};
+
+const diskutilJson = async (args: string[]): Promise<unknown | null> => {
+  const r = await execBun("diskutil", args, { timeoutMs: 10_000 });
+  if (r.code !== 0) return null;
+  const tmp = path.join(os.tmpdir(), `tfm-diskutil-${process.pid}-${Math.random().toString(36).slice(2, 8)}.plist`);
+  try {
+    await writeFile(tmp, r.stdout, "utf8");
+    const conv = await execBun("plutil", ["-convert", "json", "-o", "-", tmp], { timeoutMs: 10_000 });
+    if (conv.code !== 0) return null;
+    return JSON.parse(conv.stdout);
+  } catch {
+    return null;
+  } finally {
+    try {
+      await unlink(tmp);
+    } catch {}
+  }
+};
+
+async function listMountsDarwin(): Promise<MountEntry[]> {
+  try {
+    const list = await diskutilJson(["list", "-plist"]);
+    if (!list) return [];
+    const whole = (list as { WholeDisks?: string[] }).WholeDisks ?? [];
+    const infoByDisk = new Map<string, DiskutilDiskInfo>();
+    await Promise.all(
+      whole.map(async (d) => {
+        const info = (await diskutilJson(["info", "-plist", d])) as Record<string, unknown> | null;
+        if (!info) return;
+        infoByDisk.set(d, {
+          ejectable: info.Ejectable === true,
+          removable: info.RemovableMedia === true || info.Removable === true,
+          usb: info.BusProtocol === "USB",
+        });
+      }),
+    );
+    return parseDiskutil(list, infoByDisk);
+  } catch {
+    return [];
+  }
+}
+
 // exported for the device watcher (devwatch.ts): the poll diffs this list,
 // loadSystemPlaces() re-reads everything only when it changed
 export async function listMounts(): Promise<MountEntry[]> {
+  if (isDarwin()) return listMountsDarwin();
   try {
     // timeout: a wedged lsblk must not stall the sidebar load forever
     const { code, stdout } = await execLsblk(["-J", "-o", "NAME,PATH,RM,TRAN,LABEL,FSTYPE,MOUNTPOINTS,MOUNTPOINT"]);

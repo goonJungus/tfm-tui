@@ -5,7 +5,7 @@
 // presentations: theme presets, tab-bar adaptive/on, show-hidden state sync.
 // No renderer imports — ctx carries the sinks. ---
 import { spawnSafe } from "../fs/spawn-safe";
-import { openerCommand } from "../fs/platform";
+import { isDarwin, openerCommand } from "../fs/platform";
 import type { DefaultFileManagerOrchestration } from "../fs/default-filemanager";
 import { errMessage } from "../lib/uiutil";
 import { THEME_PRESETS } from "../config/themes";
@@ -460,7 +460,9 @@ export const makeSettingModel = (ctx: SettingsModelCtx) => {
   // its blast radius is the whole config, so it stays furthest from the knobs
   // people actually touch.
   const advancedRows = (): SettingRow[] => [
-    ...genericUiRows("advanced", { showLaunchTime: [defaultFileManagerRow()] }),
+    // no default-file-manager row on macOS: Finder can't be replaced as
+    // the folder handler, so the control would promise what it can't do
+    ...genericUiRows("advanced", { showLaunchTime: isDarwin() ? undefined : [defaultFileManagerRow()] }),
     {
       kind: "action",
       label: "edit config.toml…",

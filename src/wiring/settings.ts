@@ -28,6 +28,7 @@ import {
   type FileManagerConfirmItem,
 } from "../fs/default-filemanager";
 import { installFileManagerService, resolveServiceExec } from "../app/filemanager-service";
+import { isDarwin } from "../fs/platform";
 import { pointPaneAt } from "../app/panes";
 import {
   AmbiguousPluginError,
@@ -288,6 +289,9 @@ export const wireSettings = (deps: {
   const openDefaultFileManagerPrompt = makeDefaultFileManagerPrompt({
     choice: () => {
       try {
+        // macOS has no settable default file manager (Finder owns folder
+        // opens) — the question can never be honored, so never ask it
+        if (isDarwin()) return "silent";
         return defaultFileManagerOrchestration.choice();
       } catch (err) {
         dlog(`default-file-manager verdict failed: ${errMessage(err)}`);

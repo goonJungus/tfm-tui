@@ -199,3 +199,15 @@ export const runInstaller = async (deps: RunInstallerDeps = {}): Promise<Install
     } catch {}
   }
 };
+
+// the published installer only ships linux assets: on an arm64 mac it would
+// resolve the aarch64-linux build and overwrite tfm with a linux binary.
+// Until darwin release builds exist, the production default install path
+// refuses on darwin (tests inject `install`, so this guards defaults only).
+export const runInstallerGuarded = async (
+  deps: RunInstallerDeps = {},
+  platform: string = process.platform,
+): Promise<InstallerResult> =>
+  platform === "darwin"
+    ? { ok: false, code: null, detail: "updates aren't available on macOS yet — no darwin release builds exist" }
+    : runInstaller(deps);

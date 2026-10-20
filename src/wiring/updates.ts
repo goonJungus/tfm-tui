@@ -23,7 +23,7 @@ import {
   fetchLatestTag,
   installDirOf,
   isDevBuild,
-  runInstaller,
+  runInstallerGuarded,
   type InstallerResult,
   type RunInstallerDeps,
 } from "../app/update-run";
@@ -61,7 +61,7 @@ export const wireUpdates = (ctx: UpdatesCtx) => {
     write: (c: UpdateCache) => writeUpdateCache(c),
   };
   const fetchTag = ctx.fetchTag ?? ((o: { signal?: AbortSignal }) => fetchLatestTag(o));
-  const install = ctx.install ?? runInstaller;
+  const install = ctx.install ?? runInstallerGuarded;
 
   // null until something asked: the About row shows a plain "check for updates"
   let status: UpdateStatus | null = null;

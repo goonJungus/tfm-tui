@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, writeFileSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { buildSections, loadSystemPlaces, parseLsblk } from "./places";
+import { buildSections, loadSystemPlaces, macUserDirs, parseDiskutil, parseLsblk, type DiskutilDiskInfo } from "./places";
 import { isVirtualUri } from "./uri";
 
 const oldConfigHome = process.env.XDG_CONFIG_HOME;
@@ -346,6 +346,65 @@ describe("buildSections section titles", () => {
     } finally {
       rmSync(tmp.root, { recursive: true, force: true });
     }
+  });
+});
+
+describe("macUserDirs", () => {
+  test("fixed macOS folders, existence-filtered, Videos = ~/Movies", () => {
+    const existing = new Set(["/home/u/Desktop", "/home/u/Downloads", "/home/u/Movies"]);
+    const out = macUserDirs("/home/u", (p) => existing.has(p));
+    expect(out.map((d) => d.label)).toEqual(["Desktop", "Downloads", "Videos"]);
+    expect(out.find((d) => d.label === "Videos")?.p).toBe("/home/u/Movies");
+  });
+});
+
+describe("parseDiskutil", () => {
+  const info = new Map<string, DiskutilDiskInfo>([
+    ["disk0", { ejectable: false, removable: false, usb: false }],
+    ["disk2", { ejectable: true, removable: true, usb: true }],
+  ]);
+  const list = {
+    AllDisksAndPartitions: [
+      {
+        DeviceIdentifier: "disk0",
+        Partitions: [{ DeviceIdentifier: "disk0s2", Content: "Apple_APFS" }],
+      },
+      {
+        DeviceIdentifier: "disk3",
+        APFSPhysicalStores: [{ DeviceIdentifier: "disk0s2" }],
+        APFSVolumes: [
+          { DeviceIdentifier: "disk3s1", VolumeName: "Macintosh HD", MountPoint: "/" },
+          { DeviceIdentifier: "disk3s5", VolumeName: "Macintosh HD - Data", MountPoint: "/System/Volumes/Data" },
+        ],
+        Partitions: [],
+      },
+      {
+        DeviceIdentifier: "disk2",
+        Partitions: [
+          { DeviceIdentifier: "disk2s1", VolumeName: "USBSTICK", MountPoint: "/Volumes/USBSTICK", Content: "Microsoft Basic Data" },
+          { DeviceIdentifier: "disk2s2", VolumeName: "SPARE", Content: "Microsoft Basic Data" },
+          { DeviceIdentifier: "disk2s3", Content: "EFI" },
+        ],
+      },
+    ],
+    WholeDisks: ["disk0", "disk2", "disk3"],
+  };
+
+  test("internal volumes stay hidden; USB mounted + unmounted surface with the physical disk", () => {
+    const out = parseDiskutil(list, info);
+    expect(out.map((m) => m.label)).toEqual(["USBSTICK", "SPARE"]);
+    const mounted = out[0]!;
+    expect(mounted.target).toBe("/Volumes/USBSTICK");
+    expect(mounted.device).toBe("/dev/disk2s1");
+    expect(mounted.disk).toBe("/dev/disk2");
+    expect(mounted.removable).toBe(true);
+    expect(mounted.usb).toBe(true);
+    expect(out[1]!.target).toBe("");
+  });
+
+  test("garbage input degrades to empty", () => {
+    expect(parseDiskutil(null, info)).toEqual([]);
+    expect(parseDiskutil({}, info)).toEqual([]);
   });
 });
 

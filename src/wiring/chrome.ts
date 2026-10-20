@@ -11,7 +11,7 @@ import { PassThrough } from "node:stream";
 import { startGpmInput } from "../fs/gpm";
 import { readdir } from "node:fs/promises";
 import { spawnSafe } from "../fs/spawn-safe";
-import { openerCommand } from "../fs/platform";
+import { isDarwin, openerCommand } from "../fs/platform";
 import { loadSystemPlaces } from "../fs/places";
 import { buildMountArgs, buildUnmountArgs, gvfsRoot, takeGioPrompt, type GioPrompt } from "../fs/network";
 import { makeNetworkActions, type GioResult } from "../fs/netmount";
@@ -282,10 +282,14 @@ export const wireChrome = async (deps: {
   // renderer reads as stdin. Everywhere else startGpmInput returns null and
   // the plain process.stdin is used — no behavior change. ---
   const gpmStream = new PassThrough();
-  const gpmInput = startGpmInput({
-    onBytes: (s) => gpmStream.write(s),
-    log: (m) => dlog(m),
-  });
+  // gpm is a Linux VT-console client — macOS has no console layer (every
+  // terminal is a GUI terminal speaking xterm mouse), so never start it
+  const gpmInput = isDarwin()
+    ? null
+    : startGpmInput({
+        onBytes: (s) => gpmStream.write(s),
+        log: (m) => dlog(m),
+      });
   if (gpmInput) {
     process.stdin.pipe(gpmStream);
     (gpmStream as { setRawMode?: (v: boolean) => void; isTTY?: boolean }).setRawMode = (v) =>

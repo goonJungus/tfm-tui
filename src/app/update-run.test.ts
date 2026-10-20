@@ -11,6 +11,7 @@ import {
   isDevBuild,
   readInstallInfo,
   runInstaller,
+  runInstallerGuarded,
   type InstallerSpawn,
   type UpdateFetch,
 } from "./update-run";
@@ -262,5 +263,34 @@ describe("install provenance", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("runInstallerGuarded", () => {
+  test("darwin refuses before any download — the linux installer must never run there", async () => {
+    let fetched = false;
+    const res = await runInstallerGuarded(
+      {
+        fetch: async () => {
+          fetched = true;
+          return okText("#!/usr/bin/env bash\n");
+        },
+      },
+      "darwin",
+    );
+    expect(res.ok).toBe(false);
+    expect(res.detail).toContain("macOS");
+    expect(fetched).toBe(false);
+  });
+
+  test("linux delegates to the real installer path", async () => {
+    const res = await runInstallerGuarded(
+      {
+        fetch: async () => ({ ok: false, status: 500, headers: { get: () => null }, text: async () => "" }),
+      },
+      "linux",
+    );
+    expect(res.ok).toBe(false);
+    expect(res.detail).toContain("500");
   });
 });

@@ -9,6 +9,7 @@ import { canThumbVideo } from "./icons";
 import type { IconSlotHandle, IconSpec, IconState, SlotElement, ThumbJob } from "./ui-slots";
 import { dirWalkStats, fmtBytes, fmtDate, inodeKey, mimeLabelFor } from "../fs/propsinfo";
 import { readStarredList, starredRegistryAdd, starredRegistryRemove } from "../fs/recent";
+import { isDarwin } from "../fs/platform";
 import { isBookmarked, setBookmarked, loadSystemPlaces } from "../fs/places";
 import type { ListEntry } from "./ui-menu";
 import { FLOAT_Z, type Floats } from "./floats";
@@ -155,23 +156,29 @@ export const makeProps = (ctx: PropsCtx) => {
       propsTogglePaint("tfm-props-star", starSlot.spec, starred, starHover);
       if (starred) starredRegistryAdd(targetPath);
       else starredRegistryRemove(targetPath);
-      void execGio(["set", "-t", "string", targetPath, "metadata::starred", starred ? "true" : ""]).catch(() => {});
+      // the gio mirror keeps Nautilus's stars in sync — Linux-only; on
+      // macOS tfm's own registry (above) is the only store there is
+      if (!isDarwin())
+        void execGio(["set", "-t", "string", targetPath, "metadata::starred", starred ? "true" : ""]).catch(() => {});
     });
     let starHover = false;
     let starred = readStarredList().includes(targetPath);
     if (starred) ctx.setIconState(starSlot.spec, IconStateIdx.Active);
-    void execGio(["info", "-a", "metadata::starred", targetPath])
-      .then(({ code, stdout }) => {
-        if (code !== 0) return;
-        const m = stdout.match(/metadata::starred:\s*(\S+)/);
-        const gioStarred = !!m && m[1] !== "";
-        if (gioStarred && !starred) {
-          starred = true;
-          starredRegistryAdd(targetPath); // adopt stars made outside tfm
-        }
-        ctx.setIconState(starSlot.spec, toggleIconState(starred, starHover));
-      })
-      .catch(() => {});
+    // adopt stars made outside tfm (Nautilus, via gvfs metadata) — there is
+    // no outside star registry on macOS, so the read is Linux-only
+    if (!isDarwin())
+      void execGio(["info", "-a", "metadata::starred", targetPath])
+        .then(({ code, stdout }) => {
+          if (code !== 0) return;
+          const m = stdout.match(/metadata::starred:\s*(\S+)/);
+          const gioStarred = !!m && m[1] !== "";
+          if (gioStarred && !starred) {
+            starred = true;
+            starredRegistryAdd(targetPath); // adopt stars made outside tfm
+          }
+          ctx.setIconState(starSlot.spec, toggleIconState(starred, starHover));
+        })
+        .catch(() => {});
     // folders can be bookmarked (gtk bookmarks → sidebar); files can't.
     // created unconditionally like starSlot — just not rendered for files
     let bmHover = false;

@@ -1,5 +1,6 @@
 import { Box, type MouseEvent, Text } from "@opentui/core";
 import { spawnSafe } from "../fs/spawn-safe";
+import { deviceSpawn } from "../fs/platform";
 import path from "node:path";
 import { destroyChildren } from "../lib/uiutil";
 import { applySurface, btnSurface, rowSurface, slotBg, tileSurface, type UiStyle } from "./style";
@@ -189,8 +190,11 @@ export const makeChrome = (ctx: ChromeCtx) => {
       // default over Bun-backed spawnSafe: adapt Subprocess (exited promise,
       // no .on) to the seam's close/error surface. null = spawn failed (the
       // noop onFail already ran) — synthesize error + close so spawnWait
-      // resolves "can't eject" instead of hanging forever.
-      const proc = spawnSafe("udisksctl", args, { stdio: "ignore", timeoutMs: 10_000 }, () => {});
+      // resolves "can't eject" instead of hanging forever. The argv arrives
+      // udisksctl-shaped; deviceSpawn translates for the platform (diskutil
+      // on macOS).
+      const t = deviceSpawn(args);
+      const proc = spawnSafe(t.cmd, t.args, { stdio: "ignore", timeoutMs: 10_000 }, () => {});
       return {
         on: (ev: "close" | "error", cb: (...a: never[]) => void): unknown => {
           if (ev === "close") {
@@ -201,7 +205,7 @@ export const makeChrome = (ctx: ChromeCtx) => {
                 () => (cb as (c: number) => void)(-1),
               );
           } else if (!proc) {
-            queueMicrotask(() => (cb as (e: Error) => void)(new Error("udisksctl spawn failed")));
+            queueMicrotask(() => (cb as (e: Error) => void)(new Error(`${t.cmd} spawn failed`)));
           }
           return undefined;
         },

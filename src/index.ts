@@ -43,6 +43,10 @@ if (cli.command?.name === "plugins") {
 // headless default-file-manager controls (no TUI boot — scriptable/SSH twin
 // of the first-boot prompt + settings row)
 if (cli.command?.name === "default-filemanager") {
+  if (process.platform === "darwin") {
+    console.error("tfm: default-filemanager is not supported on macOS — Finder can't be replaced as the folder handler");
+    process.exit(2);
+  }
   const { runDefaultFileManagerCli } = await import("./app/default-filemanager-cli");
   process.exit(await runDefaultFileManagerCli(cli.command.args));
 }
@@ -58,6 +62,10 @@ if (cli.command?.name === "update") {
 // D-Bus FileManager1 daemon (started by the service activator on demand —
 // the process IS the service and runs until killed, no TUI boot)
 if (cli.filemanagerService) {
+  if (process.platform === "darwin") {
+    console.error("tfm: the FileManager1 service needs D-Bus, which macOS doesn't have");
+    process.exit(2);
+  }
   const { runFileManagerService } = await import("./app/filemanager-service");
   process.exit(await runFileManagerService());
 }

@@ -13,6 +13,7 @@ import {
   isDevBuild,
   readInstallInfo,
   runInstaller,
+  runInstallerGuarded,
   type InstallInfo,
   type InstallerResult,
   type InstallerSpawn,
@@ -161,7 +162,7 @@ export const runUpdateCli = async (args: string[], deps: UpdateCliDeps = {}): Pr
     }
   }
 
-  const install = deps.install ?? runInstaller;
+  const install = deps.install ?? runInstallerGuarded;
   try {
     const res = await install({
       tag: tagFor(latest),
