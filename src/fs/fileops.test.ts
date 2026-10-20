@@ -662,14 +662,17 @@ describe("performBulkRename", () => {
     const b = path.join(ROOT, "bulk-race-b.txt");
     W(a, "A");
     W(b, "B");
-    // external create lands between planBulkRename and apply
-    W(path.join(ROOT, "bulk-race-B.txt"), "INNOCENT");
+    // external create lands between planBulkRename and apply. The stranger
+    // target differs from the source by more than case: on a
+    // case-insensitive fs a case-variant name IS the source's own path, so
+    // that flavor of the race cannot exist there.
+    W(path.join(ROOT, "bulk-race-b2.txt"), "INNOCENT");
     await h.ops.performBulkRename([
       { from: a, to: path.join(ROOT, "bulk-race-A.txt") },
-      { from: b, to: path.join(ROOT, "bulk-race-B.txt") },
+      { from: b, to: path.join(ROOT, "bulk-race-b2.txt") },
     ]);
     expect(readFileSync(path.join(ROOT, "bulk-race-A.txt"), "utf8")).toBe("A");
-    expect(readFileSync(path.join(ROOT, "bulk-race-B.txt"), "utf8")).toBe("INNOCENT");
+    expect(readFileSync(path.join(ROOT, "bulk-race-b2.txt"), "utf8")).toBe("INNOCENT");
     expect(existsSync(b)).toBe(true);
     expect(h.calls.some((c) => c.includes("already exists"))).toBe(true);
   });
